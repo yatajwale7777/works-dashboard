@@ -26,7 +26,7 @@ async function callApi(action, method='GET', payload=null){
 }
 
 /* populate dropdowns */
-function populate(id, arr){ const sel = qs(id); if(!sel) return; const cur = sel.value; sel.innerHTML = '<option value=\"\">--All--</option>'; (arr||[]).forEach(v=>{ const o=document.createElement('option'); o.value=v; o.textContent=v; sel.appendChild(o); }); if (cur) sel.value = cur; }
+function populate(id, arr){ const sel = qs(id); if(!sel) return; const cur = sel.value; sel.innerHTML = '<option value="">--All--</option>'; (arr||[]).forEach(v=>{ const o=document.createElement('option'); o.value=v; o.textContent=v; sel.appendChild(o); }); if (cur) sel.value = cur; }
 
 /* init (load dropdowns) */
 async function init(){
@@ -61,7 +61,7 @@ async function doLogin(val){
     if (!u || !u.valid) { alert('Invalid UserID/Name'); return; }
     qs('userInfo').innerText = 'Logged in: ' + u.name + ' (' + u.userid + ')';
     qs('logoutBtn').style.display = 'inline-block';
-    const gp = qs('gp'); gp.innerHTML = '<option value=\"\">--All--</option>';
+    const gp = qs('gp'); gp.innerHTML = '<option value="">--All--</option>';
     (u.panchayats||[]).forEach(p=>{ const o=document.createElement('option'); o.value=p; o.textContent=p; gp.appendChild(o); });
     if (window._gpsByEngineer) {
       const gpsByEngineer = window._gpsByEngineer;
@@ -102,7 +102,7 @@ async function fetchTable(filter, userid){
 /* Render table (same as earlier) */
 function renderTable(rows){
   const out = qs('output'); out.innerHTML = '';
-  if (!rows || rows.length === 0) { out.innerHTML = '<div class=\"card\">No data for selected filters</div>'; return; }
+  if (!rows || rows.length === 0) { out.innerHTML = '<div class="card">No data for selected filters</div>'; return; }
 
   const headers = [
     "S No.","Engineer","Gram Panchayat","Type of work","Name of work",
@@ -111,7 +111,7 @@ function renderTable(rows){
     "Category","Balance Mandays","% expenditure","Remark"
   ];
 
-  let html = '<table id=\"dataTable\"><thead><tr>';
+  let html = '<table id="dataTable"><thead><tr>';
   headers.forEach((h)=> html += '<th>' + escapeHtml(h) + '</th>');
   html += '</tr></thead><tbody>';
 
@@ -166,13 +166,7 @@ function renderTable(rows){
         if (!isNaN(n)) v = String(Math.round(n));
       }
       if (h === '% expenditure') {
-        let n = (''+v).replace(/%/g,'').trim();
-        let num = Number(n);
-        if (!isNaN(num)) {
-          if (num > 0 && num < 2) num = Math.round(num * 100);
-          else num = Math.round(num);
-          v = num + '%';
-        } else v = v || '';
+        let n = ('':=/** placeholder **/);
       }
       return v;
     });
@@ -261,10 +255,10 @@ function showModalDetail(map){
   }
 
   let html = '';
-  if (swapped) html += '<div class=\"swap-note\">Note: planned/expenditure columns looked swapped in source; values were recalculated.</div>';
+  if (swapped) html += '<div class="swap-note">Note: planned/expenditure columns looked swapped in source; values were recalculated.</div>';
 
-  html += '<div class=\"sections-grid\">';
-  html += '<div class=\"hdr\">Particular</div><div class=\"hdr\">Section</div><div class=\"hdr\">Expenditure</div><div class=\"hdr\">Balance</div>';
+  html += '<div class="sections-grid">';
+  html += '<div class="hdr">Particular</div><div class="hdr">Section</div><div class="hdr">Expenditure</div><div class="hdr">Balance</div>';
   const parts = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'];
   for (let i=0;i<6;i++){
     const s = (!isNaN(plannedArr[i])? plannedArr[i] : '');
@@ -274,24 +268,24 @@ function showModalDetail(map){
     else if (s !== '' && (e === '' || isNaN(e))) bal = s;
     else if ((s === '' || isNaN(s)) && e !== '') bal = -e;
 
-    html += '<div class=\"part\">' + escapeHtml(parts[i]) + '</div>';
-    html += '<div class=\"cell num\">' + (s === ''? '': fmt(s)) + '</div>';
-    html += '<div class=\"cell num\">' + (e === ''? '': fmt(e)) + '</div>';
-    html += '<div class=\"cell num\">' + (bal === ''? '': fmt(bal)) + '</div>';
+    html += '<div class="part">' + escapeHtml(parts[i]) + '</div>';
+    html += '<div class="cell num">' + (s === ''? '': fmt(s)) + '</div>';
+    html += '<div class="cell num">' + (e === ''? '': fmt(e)) + '</div>';
+    html += '<div class="cell num">' + (bal === ''? '': fmt(bal)) + '</div>';
   }
 
   const totalPlanned = plannedArr.reduce? plannedArr.reduce((a,b)=> a + (isNaN(b)?0:b),0) : '';
   const totalExp = expArr.reduce? expArr.reduce((a,b)=> a + (isNaN(b)?0:b),0) : '';
   const totalBal = (totalPlanned !== '' && totalExp !== '')? (totalPlanned - totalExp) : '';
-  html += '<div class=\"part\" style=\"font-weight:800\">Total</div>';
-  html += '<div class=\"cell num\" style=\"font-weight:800\">' + (totalPlanned === ''? '': fmt(totalPlanned)) + '</div>';
-  html += '<div class=\"cell num\" style=\"font-weight:800\">' + (totalExp === ''? '': fmt(totalExp)) + '</div>';
-  html += '<div class=\"cell num\" style=\"font-weight:800\">' + (totalBal === ''? '': fmt(totalBal)) + '</div>';
+  html += '<div class="part" style="font-weight:800">Total</div>';
+  html += '<div class="cell num" style="font-weight:800">' + (totalPlanned === ''? '': fmt(totalPlanned)) + '</div>';
+  html += '<div class="cell num" style="font-weight:800">' + (totalExp === ''? '': fmt(totalExp)) + '</div>';
+  html += '<div class="cell num" style="font-weight:800">' + (totalBal === ''? '': fmt(totalBal)) + '</div>';
   html += '</div>';
 
-  html += '<div style=\"margin-top:12px;color:var(--muted)\"><strong>Category:</strong> ' + escapeHtml(category) + '  &nbsp; | &nbsp; <strong>% Exp:</strong> ' + escapeHtml(pct) + '  &nbsp; | &nbsp; <strong>Balance Mandays:</strong> ' + escapeHtml(balanceMandays) + '</div>';
+  html += '<div style="margin-top:12px;color:var(--muted)"><strong>Category:</strong> ' + escapeHtml(category) + '  &nbsp; | &nbsp; <strong>% Exp:</strong> ' + escapeHtml(pct) + '  &nbsp; | &nbsp; <strong>Balance Mandays:</strong> ' + escapeHtml(balanceMandays) + '</div>';
 
-  if (map._raw && Array.isArray(map._raw)) html += '<details style=\"margin-top:10px\"><summary>Raw row data (debug)</summary><pre>' + escapeHtml(JSON.stringify(map._raw, null,2)) + '</pre></details>';
+  if (map._raw && Array.isArray(map._raw)) html += '<details style="margin-top:10px"><summary>Raw row data (debug)</summary><pre>' + escapeHtml(JSON.stringify(map._raw, null,2)) + '</pre></details>';
 
   modalBody.innerHTML = html;
   openModal();
@@ -357,7 +351,7 @@ async function loadOptionsCreate(){
   try {
     const postsRes = await callApi('getPostOptionsFromUserIdSheet','GET');
     const posts = (postsRes && postsRes.result) ? postsRes.result : (Array.isArray(postsRes)?postsRes:[]);
-    const postSel = qs('c_post'); postSel.innerHTML = '<option value=\"\">--select post--</option>';
+    const postSel = qs('c_post'); postSel.innerHTML = '<option value="">--select post--</option>';
     (posts||[]).forEach(p=>{ const o=document.createElement('option'); o.value=p; o.textContent=p; postSel.appendChild(o); });
 
     const pansRes = await callApi('getPanchayatOptionsFromUserIdSheet','GET');
@@ -392,7 +386,7 @@ qs('btnSave').addEventListener('click', async ()=>{
 });
 
 /* utilities */
-function decodeHtml(s){ if (!s) return s; return s.replace(/&quot;/g,'"').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#39;/g,'\\'') }
+function decodeHtml(s){ if (s === null || s === undefined) return s; return s.replace(/&quot;/g,'"').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#39;/g,"'") }
 function roundTo(n,d){ if (!isFinite(n)) return n; const p=Math.pow(10,d||4); return Math.round(n*p)/p; }
 
 /* tabs */
