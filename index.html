@@ -4,34 +4,109 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Works Dashboard</title>
-
-  <!-- link to CSS -->
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div class="container">
     <div class="card">
       <div class="tabs">
-        <button class="tab-btn active">📊 Dashboard</button>
+        <button id="tabDashboard" class="tab-btn active">📊 Dashboard</button>
+        <button id="tabCreate" class="tab-btn">➕ Create / Update User (Demo)</button>
       </div>
 
-      <div style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap">
-        <div>
-          <strong style="font-size:18px">Works Dashboard</strong>
-          <div id="lastUpdate" class="meta">Loading…</div>
+      <div id="panelDashboard">
+        <div style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+          <div>
+            <strong style="font-size:18px">Works Dashboard</strong>
+            <div id="lastUpdate" class="meta">Loading…</div>
+          </div>
+
+          <div id="loginArea" style="display:flex;gap:8px;align-items:center">
+            <input id="loginInput" placeholder="UserID or Name" style="padding:8px;border-radius:6px;border:1px solid #ccc">
+            <button id="loginBtn" class="tab-btn">Login</button>
+            <button id="logoutBtn" class="tab-btn" style="display:none">Logout</button>
+            <div id="userInfo" class="meta" style="margin-left:10px"></div>
+          </div>
         </div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <input id="loginInput" placeholder="UserID or Name" style="padding:8px;border-radius:6px;border:1px solid #ccc">
-          <button id="loginBtn" class="tab-btn">Login</button>
-          <button id="exportBtn" class="tab-btn">Export CSV</button>
+
+        <div id="filtersCard" class="card" style="margin-top:12px;display:none">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+            <h3 style="margin:0">Filters (You will see only your Panchayats)</h3>
+            <div style="display:flex;gap:8px">
+              <button id="exportBtn" class="tab-btn">Export CSV</button>
+              <button id="resetBtn" class="tab-btn">Reset Filters</button>
+            </div>
+          </div>
+
+          <div class="row" style="margin-top:8px">
+            <div style="flex:1;min-width:140px">
+              <label>Engineer</label>
+              <select id="engineer" class="small"></select>
+            </div>
+            <div style="flex:1;min-width:140px">
+              <label>Panchayat</label>
+              <select id="gp" class="small"></select>
+            </div>
+            <div style="flex:1;min-width:110px">
+              <label>Year</label>
+              <select id="year" class="small"></select>
+            </div>
+            <div style="flex:1;min-width:140px">
+              <label>Work Type</label>
+              <select id="work" class="small"></select>
+            </div>
+            <div style="flex:1;min-width:110px">
+              <label>Status</label>
+              <select id="status" class="small"></select>
+            </div>
+            <div style="flex:1;min-width:140px">
+              <label>Category</label>
+              <select id="category" class="small"></select>
+            </div>
+            <div style="flex:1;min-width:180px">
+              <label>Search</label>
+              <input id="search" class="small" placeholder="keyword">
+            </div>
+          </div>
+          <div style="margin-top:8px;text-align:right">
+            <button id="filterBtn" class="tab-btn">Apply Filter</button>
+          </div>
+        </div>
+
+        <div class="table-wrap" style="margin-top:12px">
+          <div id="output"></div>
+        </div>
+
+        <details style="margin-top:10px"><summary>Debug / backend</summary><pre id="debugDash">no calls yet</pre></details>
+      </div>
+
+      <!-- CREATE / update user -->
+      <div id="panelCreate" style="display:none">
+        <div class="card">
+          <h2 style="margin:0 0 6px 0">Create / Update User — Demo</h2>
+          <div class="muted">Demo mode: only essential fields shown.</div>
+
+          <div style="margin-top:8px">
+            <label for="c_name">Name</label>
+            <input id="c_name" type="text" placeholder="e.g. irfan Qureshi" class="small">
+            <label for="c_post">Post</label>
+            <select id="c_post" class="small"><option>Loading posts...</option></select>
+            <label for="c_engg">Engg</label>
+            <input id="c_engg" type="text" placeholder="Engineer name or code" class="small">
+            <label for="c_panchayats">Panchayats (multiple)</label>
+            <select id="c_panchayats" multiple style="width:100%;min-height:120px"></select>
+            <div class="muted">Hold Ctrl/Cmd to select multiple</div>
+            <label for="c_dcode">DCode</label>
+            <input id="c_dcode" type="text" value="77" class="small">
+            <div style="margin-top:12px;display:flex;gap:8px">
+              <button id="btnSave" class="tab-btn">Save (demo)</button>
+            </div>
+            <div id="statusCreate" style="margin-top:12px" class="muted"></div>
+            <details style="margin-top:12px"><summary>Debug</summary><pre id="debugCreate">no calls yet</pre></details>
+          </div>
         </div>
       </div>
 
-      <div class="table-wrap" style="margin-top:12px">
-        <div id="output"></div>
-      </div>
-
-      <details style="margin-top:10px"><summary>Debug / backend</summary><pre id="debugDash">no calls yet</pre></details>
     </div>
   </div>
 
@@ -53,7 +128,6 @@
     </div>
   </div>
 
-  <!-- JS (deferred) -->
   <script defer src="app.js"></script>
 </body>
 </html>
