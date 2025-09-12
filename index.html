@@ -4,14 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Works Dashboard</title>
+
   <link rel="stylesheet" href="styles.css">
+  <!-- (Optional) override below with your Apps Script URL in app.js -->
 </head>
 <body>
   <div class="container">
     <div class="card">
       <div class="tabs">
         <button id="tabDashboard" class="tab-btn active">📊 Dashboard</button>
-        <button id="tabCreate" class="tab-btn">➕ Create / Update User (Demo)</button>
+        <button id="tabCreate" class="tab-btn">➕ Create / Update User</button>
       </div>
 
       <div id="panelDashboard">
@@ -22,7 +24,7 @@
           </div>
 
           <div id="loginArea" style="display:flex;gap:8px;align-items:center">
-            <input id="loginInput" placeholder="UserID or Name" style="padding:8px;border-radius:6px;border:1px solid #ccc">
+            <input id="loginInput" placeholder="UserID or Name" class="small">
             <button id="loginBtn" class="tab-btn">Login</button>
             <button id="logoutBtn" class="tab-btn" style="display:none">Logout</button>
             <div id="userInfo" class="meta" style="margin-left:10px"></div>
@@ -83,25 +85,31 @@
       <!-- CREATE / update user -->
       <div id="panelCreate" style="display:none">
         <div class="card">
-          <h2 style="margin:0 0 6px 0">Create / Update User — Demo</h2>
-          <div class="muted">Demo mode: only essential fields shown.</div>
+          <h2 style="margin:0 0 6px 0">Create / Update User</h2>
+          <div class="muted">Only essential fields shown.</div>
 
           <div style="margin-top:8px">
             <label for="c_name">Name</label>
             <input id="c_name" type="text" placeholder="e.g. irfan Qureshi" class="small">
+
             <label for="c_post">Post</label>
             <select id="c_post" class="small"><option>Loading posts...</option></select>
-            <label for="c_engg">Engg</label>
-            <input id="c_engg" type="text" placeholder="Engineer name or code" class="small">
+
+            <!-- removed Engg input as requested -->
+
             <label for="c_panchayats">Panchayats (multiple)</label>
             <select id="c_panchayats" multiple style="width:100%;min-height:120px"></select>
             <div class="muted">Hold Ctrl/Cmd to select multiple</div>
+
             <label for="c_dcode">DCode</label>
             <input id="c_dcode" type="text" value="77" class="small">
+
             <div style="margin-top:12px;display:flex;gap:8px">
-              <button id="btnSave" class="tab-btn">Save (demo)</button>
+              <button id="btnSave" class="tab-btn">Save</button>
             </div>
+
             <div id="statusCreate" style="margin-top:12px" class="muted"></div>
+
             <details style="margin-top:12px"><summary>Debug</summary><pre id="debugCreate">no calls yet</pre></details>
           </div>
         </div>
