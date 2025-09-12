@@ -1,0 +1,33 @@
+:root{--bg:#f7f9fb;--card:#fff;--muted:#666;--primary:#2ecc71;--accent:#3498db;--th:#34495e;--border:#e6e6e6;--danger:#e74c3c;--ok:#27ae60}
+html,body{height:100%;margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:#111}
+.container{max-width:1400px;margin:10px auto;padding:6px}
+.card{background:var(--card);border-radius:10px;padding:12px;box-shadow:0 6px 18px rgba(0,0,0,0.04)}
+.tabs{display:flex;gap:8px;margin-bottom:10px}
+.tab-btn{padding:6px 10px;border-radius:8px;border:1px solid #ddd;background:#fff;cursor:pointer}
+.table-wrap{overflow:auto;border-radius:8px}
+table{width:100%;border-collapse:collapse;table-layout:auto;white-space:normal}
+thead th{position:sticky;top:0;background:var(--th);color:#fff;padding:8px;font-weight:700;font-size:13px;border-bottom:1px solid rgba(255,255,255,0.06);z-index:3}
+tbody td{padding:8px;border-bottom:1px solid #eee;font-weight:700;font-size:15px;vertical-align:middle}
+tbody tr:hover{background:#fbfbfb}
+th,td{min-width:48px}
+th:nth-child(1),td:nth-child(1){width:56px}
+th:nth-child(2),td:nth-child(2){width:220px}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.45);display:none;align-items:center;justify-content:center;padding:12px;z-index:9999}
+.modal-card{background:var(--card);width:880px;max-width:98%;border-radius:10px;padding:12px;box-shadow:0 12px 40px rgba(0,0,0,0.2);font-size:13px}
+.modal-header{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.modal-title{font-weight:800;font-size:15px}
+.close-x{background:#eee;border:0;padding:6px 8px;border-radius:6px;cursor:pointer}
+.meta{color:var(--muted);font-size:13px;margin-top:6px}
+.sections-grid{display:grid;grid-template-columns: 1fr repeat(3,120px);gap:6px 10px;align-items:center;margin-top:12px}
+.sections-grid .hdr{font-weight:800;text-align:center;padding:6px 8px;background:#f6f8fa;border-radius:6px}
+.sections-grid .cell{padding:6px 8px;border-radius:6px;background:transparent;text-align:right}
+.sections-grid .part{font-weight:700;text-align:left}
+.num{font-variant-numeric:tabular-nums}
+.swap-note{color:#a64;font-weight:700;margin-top:8px}
+.modal-card .cell, .modal-card .hdr{font-size:13px;padding:6px}
+details pre{background:#f6f6f6;padding:8px;border-radius:6px;max-height:240px;overflow:auto}
+@media (max-width:700px){
+  .sections-grid{grid-template-columns: 1fr repeat(3,1fr)}
+  th:nth-child(2),td:nth-child(2){width:140px}
+  tbody td{font-size:13px}
+}

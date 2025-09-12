@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Works Dashboard</title>
+
+  <!-- link to CSS -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <div class="tabs">
+        <button class="tab-btn active">📊 Dashboard</button>
+      </div>
+
+      <div style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+        <div>
+          <strong style="font-size:18px">Works Dashboard</strong>
+          <div id="lastUpdate" class="meta">Loading…</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input id="loginInput" placeholder="UserID or Name" style="padding:8px;border-radius:6px;border:1px solid #ccc">
+          <button id="loginBtn" class="tab-btn">Login</button>
+          <button id="exportBtn" class="tab-btn">Export CSV</button>
+        </div>
+      </div>
+
+      <div class="table-wrap" style="margin-top:12px">
+        <div id="output"></div>
+      </div>
+
+      <details style="margin-top:10px"><summary>Debug / backend</summary><pre id="debugDash">no calls yet</pre></details>
+    </div>
+  </div>
+
+  <!-- modal (overlay) -->
+  <div id="modalOverlay" class="modal-overlay" role="dialog" aria-modal="true" aria-hidden="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <div id="modalTitle" class="modal-title">Work Details</div>
+          <div id="modalMeta" class="meta"></div>
+        </div>
+        <div>
+          <button id="modalExport" class="tab-btn">Export Details (CSV)</button>
+          <button id="modalClose" class="close-x">Close</button>
+        </div>
+      </div>
+
+      <div id="modalBody" style="margin-top:8px"></div>
+    </div>
+  </div>
+
+  <!-- JS (deferred) -->
+  <script defer src="app.js"></script>
+</body>
+</html>
