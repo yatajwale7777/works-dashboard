@@ -106,6 +106,26 @@ async function fetchTable(filter, userid){
     renderTable(rows);
   } catch(err){ dbg('debugDash',{fetchTableError:String(err)}); }
 }
+// ---------- ADD THIS HELPER (paste above renderTable) ----------
+function isTotalRow(row){
+  // normalize to array of strings
+  let vals = Array.isArray(row) ? row.slice() : (row && typeof row === 'object' ? Object.values(row) : [row]);
+  vals = vals.map(v => (v === null || v === undefined) ? '' : (''+v).trim().toLowerCase());
+
+  // 1) explicit "total" label anywhere
+  if (vals.some(v => v === 'total' || v.startsWith('total') || v.indexOf(' total') !== -1)) return true;
+
+  // 2) first cell empty or non-numeric, but many later cells look numeric => likely a summary/total row
+  const first = vals[0] || '';
+  const numLike = vals.reduce((c,v) => c + (/^[\d\-,\.% ]+$/.test(v) ? 1 : 0), 0);
+  if ((first === '' || !/^\d+$/.test(first)) && numLike >= Math.max(3, Math.floor(vals.length/3))) return true;
+
+  // 3) short row with a "total" label
+  if (vals.length <= 6 && numLike >= 1 && vals.some(v=> v.includes('total'))) return true;
+
+  return false;
+}
+
 
 /* Render table (patched) */
 function renderTable(rows){
@@ -123,6 +143,14 @@ function renderTable(rows){
   let html = '<table id="dataTable"><thead><tr>';
   headers.forEach((h)=> html += '<th>' + escapeHtml(h) + '</th>');
   html += '</tr></thead><tbody>';
+// agar last row "Total" hai to usko hata do
+if (rows.length > 0) {
+  const last = rows[rows.length - 1];
+  const str = JSON.stringify(last).toLowerCase();
+  if (str.includes('"total"') || str.startsWith('["total')) {
+    rows.pop();
+  }
+}
 
   rows.forEach((r, ridx)=>{
     let arr = Array.isArray(r) ? r.slice() : (r && typeof r === 'object' ? Object.values(r) : [r]);
