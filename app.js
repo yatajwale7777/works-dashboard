@@ -3,14 +3,14 @@ window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbxAo8oSHyqP7Roj_
 // ===========================================================
 
 /* helpers */
-function qs(id){return document.getElementById(id)}
-function dbg(id,obj){try{qs(id).textContent = typeof obj === 'string' ? obj : JSON.stringify(obj,null,2)}catch(e){console.log(e)} }
-function escapeHtml(s){ return (''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') }
-function toNum(v){ if (v===null||v===undefined) return NaN; const s=(''+v).replace(/,/g,'').trim(); if(s==='') return NaN; const n=Number(s); return isNaN(n)?NaN:n }
-function fmt(n){ if (n===''||n===null||n===undefined) return ''; if (isNaN(n)) return ''; if (Math.abs(n)>=1000) return Number(n).toLocaleString(); if (Math.abs(n - Math.round(n))>0 && Math.abs(n) < 1) return Number(n).toFixed(4); if (Math.abs(n - Math.round(n))>0) return Number(n).toFixed(4); return String(Math.round(n)) }
+function qs(id){ return document.getElementById(id); }
+function dbg(id,obj){ try{ qs(id).textContent = typeof obj === 'string' ? obj : JSON.stringify(obj,null,2); } catch(e){ console.log(e); } }
+function escapeHtml(s){ return (''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function toNum(v){ if (v===null||v===undefined) return NaN; const s=(''+v).replace(/,/g,'').trim(); if(s==='') return NaN; const n=Number(s); return isNaN(n)?NaN:n; }
+function fmt(n){ if (n===''||n===null||n===undefined) return ''; if (isNaN(n)) return ''; if (Math.abs(n)>=1000) return Number(n).toLocaleString(); if (Math.abs(n - Math.round(n))>0 && Math.abs(n) < 1) return Number(n).toFixed(4); if (Math.abs(n - Math.round(n))>0) return Number(n).toFixed(4); return String(Math.round(n)); }
 
 /* decode helper for data-payload */
-function decodeHtml(s){ if (s === null || s === undefined) return s; return s.replace(/&quot;/g,'"').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#39;/g,"'") }
+function decodeHtml(s){ if (s === null || s === undefined) return s; return s.replace(/&quot;/g,'"').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#39;/g,"'"); }
 
 /* safe fetch helper */
 async function safeFetchJson(response){
@@ -36,15 +36,12 @@ async function callApi(action, method='GET', payload=null){
   }
 }
 
-/* computeSectionsFromRaw - kept as helper but not required for fixed mapping */
+/* computeSectionsFromRaw - small helper if needed elsewhere */
 function computeSectionsFromRaw(rawArr){
   const raw = i => (Array.isArray(rawArr) ? (rawArr[i-1] === undefined ? '' : rawArr[i-1]) : '');
   function toNumLocal(v){ if (v === null || v === undefined) return NaN; const s = (''+v).replace(/,/g,'').trim(); if (s==='') return NaN; const n = Number(s); return isNaN(n)?NaN:n; }
-  // Default indices as you specified (1-based)
-  const plannedIdx = [8,9,10,11,12,13];
-  const expIdx =     [14,15,16,17,18,19];
-  const planned = plannedIdx.map(i => toNumLocal(raw(i)));
-  const exp = expIdx.map(i => toNumLocal(raw(i)));
+  const planned = [8,9,10,11,12,13].map(i => toNumLocal(raw(i)));
+  const exp = [14,15,16,17,18,19].map(i => toNumLocal(raw(i)));
   return { planned: planned, exp: exp, swapped: false };
 }
 
@@ -89,7 +86,7 @@ function renderTable(rows){
     map['Year of Work'] = arr[5] !== undefined ? arr[5] : '';         // col6
     map['Status'] = arr[6] !== undefined ? arr[6] : '';               // col7
 
-    // Planned (cols 8..13)
+    // Planned (cols 8..13) -> arr[7]..arr[12]
     map['Unskilled'] = toNumLocal(arr[7]);
     map['Semi-skilled'] = toNumLocal(arr[8]);
     map['Skilled'] = toNumLocal(arr[9]);
@@ -99,7 +96,7 @@ function renderTable(rows){
     const sheetTotalCost = toNumLocal(arr[12]);
     map['Total Cost'] = !isNaN(sheetTotalCost) ? sheetTotalCost : NaN;
 
-    // Expenditure (cols 14..19)
+    // Expenditure (cols 14..19) -> arr[13]..arr[18]
     map['Unskilled Exp'] = toNumLocal(arr[13]);
     map['Semi-skilled Exp'] = toNumLocal(arr[14]);
     map['Skilled Exp'] = toNumLocal(arr[15]);
@@ -109,7 +106,7 @@ function renderTable(rows){
     const sheetTotalExp = toNumLocal(arr[18]);
     map['Total Exp'] = !isNaN(sheetTotalExp) ? sheetTotalExp : NaN;
 
-    // Category / Balance Mandays / % / Remark (cols 20..23)
+    // Category / Balance Mandays / % expenditure / Remark (cols 20..23)
     map['Category'] = arr[19] !== undefined ? arr[19] : '';
     map['Balance Mandays'] = arr[20] !== undefined ? arr[20] : '';
     map['% expenditure'] = arr[21] !== undefined ? arr[21] : '';
@@ -173,7 +170,6 @@ function renderTable(rows){
       }
 
       if (rawv === '') return '';
-      // For numeric values, show original (no rounding here), but stringify
       return (''+rawv).trim();
     });
 
@@ -245,7 +241,8 @@ function showModalDetail(map){
 
   const parts = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'];
 
-  let html = '<div class="sections-grid">';
+  let html = '';
+  html += '<div class="sections-grid">';
   html += '<div class="hdr">Particular</div><div class="hdr">Section</div><div class="hdr">Expenditure</div><div class="hdr">Balance</div>';
   for (let i=0;i<6;i++){
     const s = (!isNaN(plannedArr[i])? plannedArr[i] : '');
@@ -265,6 +262,7 @@ function showModalDetail(map){
   const totalPlanned = plannedArr.reduce? plannedArr.reduce((a,b)=> a + (isNaN(b)?0:b),0) : '';
   const totalExp = expArr.reduce? expArr.reduce((a,b)=> a + (isNaN(b)?0:b),0) : '';
   const totalBal = (totalPlanned !== '' && totalExp !== '')? (totalPlanned - totalExp) : '';
+
   html += '<div class="part" style="font-weight:800">Total</div>';
   html += '<div class="cell num" style="font-weight:800">' + (totalPlanned === ''? '': fmt(totalPlanned)) + '</div>';
   html += '<div class="cell num" style="font-weight:800">' + (totalExp === ''? '': fmt(totalExp)) + '</div>';
@@ -302,14 +300,14 @@ function showModalDetail(map){
   openModal();
 }
 
-function openModal(){ if(modalOverlay){ modalOverlay.style.display = 'flex'; document.body.style.overflow='hidden'; modalOverlay.setAttribute('aria-hidden','false') } }
-function closeModal(){ if(modalOverlay){ modalOverlay.style.display = 'none'; document.body.style.overflow='auto'; modalOverlay.setAttribute('aria-hidden','true'); if(qs('modalBody')) qs('modalBody').innerHTML = '' } }
-if (qs('modalClose')) qs('modalClose').addEventListener('click', closeModal)
-if (modalOverlay) modalOverlay.addEventListener('click', function(e){ if (e.target === modalOverlay) closeModal() })
+function openModal(){ if(modalOverlay){ modalOverlay.style.display = 'flex'; document.body.style.overflow='hidden'; modalOverlay.setAttribute('aria-hidden','false'); } }
+function closeModal(){ if(modalOverlay){ modalOverlay.style.display = 'none'; document.body.style.overflow='auto'; modalOverlay.setAttribute('aria-hidden','true'); if(qs('modalBody')) qs('modalBody').innerHTML = ''; } }
+if (qs('modalClose')) qs('modalClose').addEventListener('click', closeModal);
+if (modalOverlay) modalOverlay.addEventListener('click', function(e){ if (e.target === modalOverlay) closeModal(); });
 
-/* modal export (keeps existing behavior) */
+/* modal export */
 if (qs('modalExport')) qs('modalExport').addEventListener('click', function(){
-  const map = currentModalData; if (!map) return alert('No data'); 
+  const map = currentModalData; if (!map) return alert('No data');
   const planned = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'].map(k=> toNum(map[k]));
   const exp = ['Unskilled Exp','Semi-skilled Exp','Skilled Exp','Material Exp','Contingency Exp','Total Exp'].map(k=> toNum(map[k]));
 
@@ -337,7 +335,7 @@ if (qs('modalExport')) qs('modalExport').addEventListener('click', function(){
   const a = document.createElement('a'); a.href = url; a.download = ((map['Name of work']||'work').toString().replace(/[^\w\-]/g,'_').slice(0,60)) + '_details.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 });
 
-/* export main table (existing) */
+/* export main table */
 if (qs('exportBtn')) qs('exportBtn').addEventListener('click', ()=> {
   const table = qs('dataTable'); if (!table) return alert('No table to export');
   const rows = Array.from(table.querySelectorAll('thead tr, tbody tr'));
@@ -345,7 +343,7 @@ if (qs('exportBtn')) qs('exportBtn').addEventListener('click', ()=> {
     const cells = Array.from(tr.querySelectorAll('th,td')).map(td=>{
       let txt = td.innerText.replace(/\r?\n/g,' ').trim();
       if (txt.indexOf('"') !== -1) txt = txt.replace(/"/g,'""');
-      if (txt.indexOf(',') !==  -1 || txt.indexOf('"')!==-1) return '"' + txt + '"';
+      if (txt.indexOf(',') !== -1 || txt.indexOf('"')!==-1) return '"' + txt + '"';
       return txt;
     });
     return cells.join(',');
