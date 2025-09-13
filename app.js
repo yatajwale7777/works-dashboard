@@ -390,19 +390,45 @@ function cleanCategoryList(arr){
   out.sort();
   return out;
 }
-/* fetch table */
+/* helper: ensure filter keys exist and are strings (trimmed) */
+function sanitizeFilter(input){
+  const keys = ['engineer','gp','work','status','year','search'];
+  const out = {};
+  input = input || {};
+  keys.forEach(k=>{
+    let v = input[k];
+    if (v === null || v === undefined) { out[k] = ''; return; }
+    if (typeof v === 'string') v = v.trim();
+    else v = (''+v).trim();
+    out[k] = v;
+  });
+  return out;
+}
+
+/* fetch table (sanitized) - REPLACE your old fetchTable with this */
 async function fetchTable(filter, userid){
   try {
     if (!userid) { alert('Please login first'); return; }
-    const res = await callApi('getFilteredData','POST',{ filter: filter, userid: userid });
+
+    // sanitize filter before sending
+    const filt = sanitizeFilter(filter || {});
+    dbg('debugDash',{ sendingFilter: filt, userid: userid });
+
+    // call API - keep same callApi signature (it posts x-www-form-urlencoded)
+    const res = await callApi('getFilteredData','POST',{ filter: filt, userid: userid });
+
     dbg('debugDash',{filteredRes:res});
     let rows = [];
+    // handle different shapes returned by backend
     if (res && res.ok && res.rows) rows = res.rows;
     else if (Array.isArray(res)) rows = res;
     else if (res && res.rows) rows = res.rows;
+    else if (res && res.result && Array.isArray(res.result)) rows = res.result;
+
     renderTable(rows);
   } catch(err){ dbg('debugDash',{fetchTableError:String(err)}); }
 }
+
 
 /* Login / Logout (simple) */
 if (qs('loginBtn')) qs('loginBtn').addEventListener('click', ()=>{ const v = qs('loginInput').value.trim(); if (!v) return alert('Enter UserID or Name'); doLogin(v); });
