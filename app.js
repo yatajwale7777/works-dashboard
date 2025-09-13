@@ -258,15 +258,6 @@ function showModalDetail(map){
     html += '<div class="cell num">' + (bal === ''? '': fmt(bal)) + '</div>';
   }
 
-  // totals row
-  const totalPlanned = plannedArr.reduce? plannedArr.reduce((a,b)=> a + (isNaN(b)?0:b),0) : '';
-  const totalExp = expArr.reduce? expArr.reduce((a,b)=> a + (isNaN(b)?0:b),0) : '';
-  const totalBal = (totalPlanned !== '' && totalExp !== '')? (totalPlanned - totalExp) : '';
-
-  html += '<div class="part" style="font-weight:800">Total</div>';
-  html += '<div class="cell num" style="font-weight:800">' + (totalPlanned === ''? '': fmt(totalPlanned)) + '</div>';
-  html += '<div class="cell num" style="font-weight:800">' + (totalExp === ''? '': fmt(totalExp)) + '</div>';
-  html += '<div class="cell num" style="font-weight:800">' + (totalBal === ''? '': fmt(totalBal)) + '</div>';
   html += '</div>'; // end grid
 
   // display % exp (prefer sheet value, else compute from totals)
@@ -279,9 +270,14 @@ function showModalDetail(map){
         if (Math.abs(num) <= 1) num = num * 100;
         pctDisplay = Math.round(num) + '%';
       } else pctDisplay = s;
-    } else if (!isNaN(totalPlanned) && totalPlanned !== 0 && !isNaN(totalExp)) {
-      pctDisplay = Math.round((totalExp / totalPlanned) * 100) + '%';
-    } else pctDisplay = '';
+    } else {
+      // fallback: compute from totals if available in arrays
+      const totalPlanned = plannedArr.reduce? plannedArr.reduce((a,b)=> a + (isNaN(b)?0:b),0) : NaN;
+      const totalExp = expArr.reduce? expArr.reduce((a,b)=> a + (isNaN(b)?0:b),0) : NaN;
+      if (!isNaN(totalPlanned) && totalPlanned !== 0 && !isNaN(totalExp)) {
+        pctDisplay = Math.round((totalExp / totalPlanned) * 100) + '%';
+      } else pctDisplay = '';
+    }
   } catch(e){ pctDisplay = ''; }
 
   // balance mandays as integer
@@ -299,6 +295,7 @@ function showModalDetail(map){
   if (modalBody) modalBody.innerHTML = html;
   openModal();
 }
+
 
 function openModal(){ if(modalOverlay){ modalOverlay.style.display = 'flex'; document.body.style.overflow='hidden'; modalOverlay.setAttribute('aria-hidden','false'); } }
 function closeModal(){ if(modalOverlay){ modalOverlay.style.display = 'none'; document.body.style.overflow='auto'; modalOverlay.setAttribute('aria-hidden','true'); if(qs('modalBody')) qs('modalBody').innerHTML = ''; } }
