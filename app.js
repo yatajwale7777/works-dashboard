@@ -1,6 +1,6 @@
 // ====== Configuration: set your Apps Script URL here ======
 window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbyricoKtthZHv_add4dyJAm0DhuTEumurnId3yoCJhwhk65aoIjKvYIrqkrHf3z3pqQjw/exec";
-// ===========================================================
+// ============================================================
 
 /* helpers */
 function qs(id){ return document.getElementById(id); }
