@@ -1,7 +1,6 @@
 // ====== Configuration: set your Apps Script URL here ======
 window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbxAo8oSHyqP7Roj_LDmrbFtOhoi47a0Zhz6M7IRlHJrl1kiTsKNuTx5ptAZv7OYceODAA/exec";
-// ===========================================================
-
+// ==========================================================
 
 /* helpers */
 function qs(id){return document.getElementById(id)}
@@ -106,31 +105,33 @@ async function fetchTable(filter, userid){
     renderTable(rows);
   } catch(err){ dbg('debugDash',{fetchTableError:String(err)}); }
 }
-// ---------- ADD THIS HELPER (paste above renderTable) ----------
+
+// ---------- helper to detect total/summary row ----------
 function isTotalRow(row){
-  // normalize to array of strings
   let vals = Array.isArray(row) ? row.slice() : (row && typeof row === 'object' ? Object.values(row) : [row]);
   vals = vals.map(v => (v === null || v === undefined) ? '' : (''+v).trim().toLowerCase());
-
-  // 1) explicit "total" label anywhere
   if (vals.some(v => v === 'total' || v.startsWith('total') || v.indexOf(' total') !== -1)) return true;
-
-  // 2) first cell empty or non-numeric, but many later cells look numeric => likely a summary/total row
   const first = vals[0] || '';
-  const numLike = vals.reduce((c,v) => c + (/^[\d\-,\.\% ]+$/.test(v) ? 1 : 0), 0);
+  const numLike = vals.reduce((c,v) => c + (/^[\d\-,\.% ]+$/.test(v) ? 1 : 0), 0);
   if ((first === '' || !/^\d+$/.test(first)) && numLike >= Math.max(3, Math.floor(vals.length/3))) return true;
-
-  // 3) short row with a "total" label
   if (vals.length <= 6 && numLike >= 1 && vals.some(v=> v.includes('total'))) return true;
-
   return false;
 }
-
 
 /* Render table (patched) */
 function renderTable(rows){
   const out = qs('output'); if (!out) return;
   out.innerHTML = '';
+
+  // defensive normalize: rows might be object-like
+  if (!rows) rows = [];
+  if (!Array.isArray(rows)) {
+    try { rows = Object.values(rows); } catch(e){ rows = []; }
+  }
+
+  // drop trailing total/summary row if present
+  if (rows.length > 0 && isTotalRow(rows[rows.length - 1])) rows = rows.slice(0, -1);
+
   if (!rows || rows.length === 0) { out.innerHTML = '<div class="card">No data for selected filters</div>'; return; }
 
   const headers = [
@@ -143,14 +144,6 @@ function renderTable(rows){
   let html = '<table id="dataTable"><thead><tr>';
   headers.forEach((h)=> html += '<th>' + escapeHtml(h) + '</th>');
   html += '</tr></thead><tbody>';
-// agar last row "Total" hai to usko hata do
-if (rows.length > 0) {
-  const last = rows[rows.length - 1];
-  const str = JSON.stringify(last).toLowerCase();
-  if (str.includes('"total"') || str.startsWith('["total')) {
-    rows.pop();
-  }
-}
 
   rows.forEach((r, ridx)=>{
     let arr = Array.isArray(r) ? r.slice() : (r && typeof r === 'object' ? Object.values(r) : [r]);
@@ -176,6 +169,30 @@ if (rows.length > 0) {
       map['% expenditure'] = slice[20] || '';
       map['Remark'] = slice[21] || '';
       map._raw = arr.slice();
+
+      // normalize planned/exp using computeSectionsFromRaw so table matches modal
+      try {
+        if (map._raw && typeof computeSectionsFromRaw === 'function') {
+          const c = computeSectionsFromRaw(map._raw);
+          const parts = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'];
+          if (Array.isArray(c.planned) && c.planned.length === 6) {
+            for (let pi = 0; pi < 6; pi++) {
+              const pval = c.planned[pi];
+              if (!isNaN(pval)) map[parts[pi]] = pval;
+            }
+          }
+          if (Array.isArray(c.exp) && c.exp.length === 6) {
+            for (let ei = 0; ei < 6; ei++) {
+              const evalv = c.exp[ei];
+              const key = parts[ei] + ' Exp';
+              if (!isNaN(evalv)) map[key] = evalv;
+            }
+          }
+          if (!isNaN(c.planned.reduce((a,b)=>a+(isNaN(b)?0:b),0))) map['Total Cost'] = c.planned.reduce((a,b)=>a+(isNaN(b)?0:b),0);
+          if (!isNaN(c.exp.reduce((a,b)=>a+(isNaN(b)?0:b),0))) map['Total Exp'] = c.exp.reduce((a,b)=>a+(isNaN(b)?0:b),0);
+        }
+      } catch(e) { /* ignore */ }
+
     } else {
       if (arr.length > 0 && /^\d+$/.test(arr[0])) arr.shift();
       map['Engineer'] = arr[0] || '';
@@ -193,6 +210,29 @@ if (rows.length > 0) {
       map['% expenditure'] = arr[20] || '';
       map['Remark'] = arr[21] || '';
       map._raw = arr.slice();
+
+      // normalize planned/exp using computeSectionsFromRaw so table matches modal
+      try {
+        if (map._raw && typeof computeSectionsFromRaw === 'function') {
+          const c = computeSectionsFromRaw(map._raw);
+          const parts = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'];
+          if (Array.isArray(c.planned) && c.planned.length === 6) {
+            for (let pi = 0; pi < 6; pi++) {
+              const pval = c.planned[pi];
+              if (!isNaN(pval)) map[parts[pi]] = pval;
+            }
+          }
+          if (Array.isArray(c.exp) && c.exp.length === 6) {
+            for (let ei = 0; ei < 6; ei++) {
+              const evalv = c.exp[ei];
+              const key = parts[ei] + ' Exp';
+              if (!isNaN(evalv)) map[key] = evalv;
+            }
+          }
+          if (!isNaN(c.planned.reduce((a,b)=>a+(isNaN(b)?0:b),0))) map['Total Cost'] = c.planned.reduce((a,b)=>a+(isNaN(b)?0:b),0);
+          if (!isNaN(c.exp.reduce((a,b)=>a+(isNaN(b)?0:b),0))) map['Total Exp'] = c.exp.reduce((a,b)=>a+(isNaN(b)?0:b),0);
+        }
+      } catch(e) { /* ignore */ }
     }
 
     const disp = headers.slice(1).map(h => {
@@ -203,13 +243,30 @@ if (rows.length > 0) {
         if (!isNaN(n)) v = String(Math.round(n));
       }
       if (h === '% expenditure') {
-        let n = (''+v).replace(/%/g,'').trim();
-        let num = Number(n);
-        if (!isNaN(num)) {
-          // always convert fraction -> percent and round to integer
-          if (Math.abs(num) <= 1) num = num * 100;
-          v = Math.round(num) + '%';
-        } else v = v || '';
+        // Try to compute percent from raw arrays (same logic as modal).
+        let pctDisplay = '';
+        try {
+          const raw = Array.isArray(map._raw) ? map._raw : null;
+          if (raw && typeof computeSectionsFromRaw === 'function') {
+            const c = computeSectionsFromRaw(raw);
+            const tp = Array.isArray(c.planned) ? c.planned.reduce((a,b)=> a + (isNaN(b)?0:b),0) : NaN;
+            const te = Array.isArray(c.exp) ? c.exp.reduce((a,b)=> a + (isNaN(b)?0:b),0) : NaN;
+            if (!isNaN(tp) && tp !== 0 && !isNaN(te)) {
+              pctDisplay = Math.round((te / tp) * 100) + '%';
+            }
+          }
+          if (!pctDisplay) {
+            // fallback to map value
+            let rawPct = ('' + (v || '')).replace(/%/g,'').trim();
+            let pnum = Number(rawPct);
+            if (!isNaN(pnum)) {
+              if (Math.abs(pnum) <= 1) pnum = pnum * 100;
+              pctDisplay = Math.round(pnum) + '%';
+            } else pctDisplay = '';
+          }
+        } catch(e) { pctDisplay = (''+v).replace(/%/g,'').trim(); }
+
+        v = pctDisplay;
       }
       return v;
     });
