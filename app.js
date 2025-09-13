@@ -3,7 +3,6 @@ window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbxL2IXyStgCaMbDY
 // ============================================================
 
 
-
 /* helpers */
 function qs(id){ return document.getElementById(id); }
 function dbg(id,obj){ try{ qs(id).textContent = typeof obj === 'string' ? obj : JSON.stringify(obj,null,2); } catch(e){ console.log(e); } }
