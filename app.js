@@ -1,6 +1,6 @@
 // ====== Configuration: set your Apps Script URL here ======
 window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbxAo8oSHyqP7Roj_LDmrbFtOhoi47a0Zhz6M7IRlHJrl1kiTsKNuTx5ptAZv7OYceODAA/exec";
-// ==========================================================
+// ===========================================================
 
 /* helpers */
 function qs(id){return document.getElementById(id)}
@@ -16,7 +16,7 @@ async function safeFetchJson(response){
   catch(e){ return { ok:false, error:'non-json-response', status: response.status, statusText: response.statusText, raw: txt }; }
 }
 
-/* network (GET/POST) - now resilient to HTML/404 responses */
+/* network (GET/POST) - resilient to HTML/404 responses */
 async function callApi(action, method='GET', payload=null){
   if (!window.APPSCRIPT_URL) return Promise.reject(new Error('APPSCRIPT_URL not set'));
   if (method === 'GET') {
@@ -33,105 +33,35 @@ async function callApi(action, method='GET', payload=null){
   }
 }
 
-/* populate dropdowns */
-function populate(id, arr){ const sel = qs(id); if(!sel) return; const cur = sel.value; sel.innerHTML = '<option value="">--All--</option>'; (arr||[]).forEach(v=>{ const o=document.createElement('option'); o.value=v; o.textContent=v; sel.appendChild(o); }); if (cur) sel.value = cur; }
+/* compute sections (planned cols 8..13, exp 14..19) with swap detection */
+function computeSectionsFromRaw(rawArr){
+  const raw = i => (Array.isArray(rawArr) ? (rawArr[i-1] === undefined ? '' : rawArr[i-1]) : '');
+  function toNum(v){ if (v === null || v === undefined) return NaN; const s = (''+v).replace(/,/g,'').trim(); if (s==='') return NaN; const n = Number(s); return isNaN(n)?NaN:n; }
+  const plannedIdx = [8,9,10,11,12,13];
+  const expIdx =     [14,15,16,17,18,19];
+  const plannedVals = plannedIdx.map(i => toNum(raw(i)));
+  const expVals = expIdx.map(i => toNum(raw(i)));
+  const sum = arr => arr.reduce((s,x)=> s + (isNaN(x)?0:x), 0);
+  const plannedSum = sum(plannedVals), expSum = sum(expVals);
 
-/* init (load dropdowns) */
-async function init(){
-  if (!window.APPSCRIPT_URL || window.APPSCRIPT_URL.trim() === '') { dbg('debugDash','Set window.APPSCRIPT_URL'); return; }
-  try {
-    const dd = await callApi('getDropdownData','GET');
-    if (dd && dd.ok && dd.data) {
-      const dt = dd.data;
-      if (qs('lastUpdate')) qs('lastUpdate').innerText = 'Last Update: ' + (dt.updateTime || '');
-      populate('year', dt.years || []);
-      populate('work', dt.works || []);
-      populate('status', dt.status || []);
-      populate('category', dt.categories || []);
-      populate('engineer', dt.engineers || []);
-      window._gpsByEngineer = dt.gpsByEngineer || {};
-      dbg('debugDash',{dropdowns:dt});
-    } else dbg('debugDash',{error:dd});
-  } catch(err){ dbg('debugDash',{error:String(err)}); }
+  let swapped = false;
+  if ((Math.abs(plannedSum) < 1e-6 && Math.abs(expSum) > 1e-6) || (plannedSum !== 0 && expSum !==0 && Math.abs(plannedSum) < Math.abs(expSum)*0.4)) {
+    swapped = true;
+  }
+  const finalPlanned = swapped ? expVals : plannedVals;
+  const finalExp = swapped ? plannedVals : expVals;
+
+  return {
+    planned: finalPlanned,
+    exp: finalExp,
+    swapped: swapped
+  };
 }
 
-/* Login / Logout */
-if (qs('loginBtn')) qs('loginBtn').addEventListener('click', ()=>{ const v = qs('loginInput').value.trim(); if (!v) return alert('Enter UserID or Name'); doLogin(v); });
-if (qs('logoutBtn')) qs('logoutBtn').addEventListener('click', ()=>{ if(qs('loginInput')) qs('loginInput').value=''; if(qs('userInfo')) qs('userInfo').innerText=''; if(qs('filtersCard')) qs('filtersCard').style.display='none'; if(qs('output')) qs('output').innerHTML=''; if(qs('logoutBtn')) qs('logoutBtn').style.display='none'; });
-
-async function doLogin(val){
-  try {
-    const res = await callApi('validateUserCredential','POST',{ input: val });
-    dbg('debugDash',{validate:res});
-    if (!res) { alert('Invalid user or backend error'); return; }
-    let u = (res.user || res);
-    if (res.ok && res.user) u = res.user;
-    if (!u || !u.valid) { alert('Invalid UserID/Name'); return; }
-    if (qs('userInfo')) qs('userInfo').innerText = 'Logged in: ' + u.name + ' (' + u.userid + ')';
-    if (qs('logoutBtn')) qs('logoutBtn').style.display = 'inline-block';
-    const gp = qs('gp'); if (gp) { gp.innerHTML = '<option value="">--All--</option>'; (u.panchayats||[]).forEach(p=>{ const o=document.createElement('option'); o.value=p; o.textContent=p; gp.appendChild(o); }); }
-    if (window._gpsByEngineer) {
-      const gpsByEngineer = window._gpsByEngineer;
-      const engines = Object.keys(gpsByEngineer).filter(e=>{
-        const arr = (gpsByEngineer[e]||[]).map(x=>(''+x).trim().toLowerCase());
-        return (u.panchayats||[]).some(up => arr.indexOf((''+up).trim().toLowerCase()) !== -1);
-      });
-      populate('engineer', engines);
-      window._engineers = engines.map(x=>(''+x).trim());
-    }
-    if (qs('filtersCard')) qs('filtersCard').style.display = 'block';
-    await fetchTable({}, u.userid);
-  } catch(err){ dbg('debugDash',{loginError:String(err)}); alert('Login error: '+String(err)); }
-}
-
-/* Filters apply/reset */
-if (qs('filterBtn')) qs('filterBtn').addEventListener('click', async function(){
-  const filter = { engineer: qs('engineer')?qs('engineer').value:'', gp: qs('gp')?qs('gp').value:'', year: qs('year')?qs('year').value:'', work: qs('work')?qs('work').value:'', status: qs('status')?qs('status').value:'', category: qs('category')?qs('category').value:'', search: qs('search')?qs('search').value:'' };
-  const userid = qs('loginInput')?qs('loginInput').value.trim():'';
-  await fetchTable(filter, userid);
-});
-if (qs('resetBtn')) qs('resetBtn').addEventListener('click', function(){ if(qs('engineer')) qs('engineer').value=''; if(qs('gp')) qs('gp').value=''; if(qs('year')) qs('year').value=''; if(qs('work')) qs('work').value=''; if(qs('status')) qs('status').value=''; if(qs('category')) qs('category').value=''; if(qs('search')) qs('search').value=''; });
-
-/* fetch table */
-async function fetchTable(filter, userid){
-  try {
-    if (!userid) { alert('Please login first'); return; }
-    const res = await callApi('getFilteredData','POST',{ filter: filter, userid: userid });
-    dbg('debugDash',{filteredRes:res});
-    let rows = [];
-    if (res && res.ok && res.rows) rows = res.rows;
-    else if (Array.isArray(res)) rows = res;
-    else if (res && res.rows) rows = res.rows;
-    renderTable(rows);
-  } catch(err){ dbg('debugDash',{fetchTableError:String(err)}); }
-}
-
-// ---------- helper to detect total/summary row ----------
-function isTotalRow(row){
-  let vals = Array.isArray(row) ? row.slice() : (row && typeof row === 'object' ? Object.values(row) : [row]);
-  vals = vals.map(v => (v === null || v === undefined) ? '' : (''+v).trim().toLowerCase());
-  if (vals.some(v => v === 'total' || v.startsWith('total') || v.indexOf(' total') !== -1)) return true;
-  const first = vals[0] || '';
-  const numLike = vals.reduce((c,v) => c + (/^[\d\-,\.% ]+$/.test(v) ? 1 : 0), 0);
-  if ((first === '' || !/^\d+$/.test(first)) && numLike >= Math.max(3, Math.floor(vals.length/3))) return true;
-  if (vals.length <= 6 && numLike >= 1 && vals.some(v=> v.includes('total'))) return true;
-  return false;
-}
-
-/* Render table (patched) */
+/* Render table */
 function renderTable(rows){
   const out = qs('output'); if (!out) return;
   out.innerHTML = '';
-
-  // defensive normalize: rows might be object-like
-  if (!rows) rows = [];
-  if (!Array.isArray(rows)) {
-    try { rows = Object.values(rows); } catch(e){ rows = []; }
-  }
-
-  // drop trailing total/summary row if present
-  if (rows.length > 0 && isTotalRow(rows[rows.length - 1])) rows = rows.slice(0, -1);
-
   if (!rows || rows.length === 0) { out.innerHTML = '<div class="card">No data for selected filters</div>'; return; }
 
   const headers = [
@@ -144,6 +74,13 @@ function renderTable(rows){
   let html = '<table id="dataTable"><thead><tr>';
   headers.forEach((h)=> html += '<th>' + escapeHtml(h) + '</th>');
   html += '</tr></thead><tbody>';
+
+  // drop last total/summary row if present
+  if (rows.length > 0) {
+    const last = rows[rows.length - 1];
+    const str = JSON.stringify(last).toLowerCase();
+    if (str.includes('total')) rows.pop();
+  }
 
   rows.forEach((r, ridx)=>{
     let arr = Array.isArray(r) ? r.slice() : (r && typeof r === 'object' ? Object.values(r) : [r]);
@@ -169,30 +106,6 @@ function renderTable(rows){
       map['% expenditure'] = slice[20] || '';
       map['Remark'] = slice[21] || '';
       map._raw = arr.slice();
-
-      // normalize planned/exp using computeSectionsFromRaw so table matches modal
-      try {
-        if (map._raw && typeof computeSectionsFromRaw === 'function') {
-          const c = computeSectionsFromRaw(map._raw);
-          const parts = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'];
-          if (Array.isArray(c.planned) && c.planned.length === 6) {
-            for (let pi = 0; pi < 6; pi++) {
-              const pval = c.planned[pi];
-              if (!isNaN(pval)) map[parts[pi]] = pval;
-            }
-          }
-          if (Array.isArray(c.exp) && c.exp.length === 6) {
-            for (let ei = 0; ei < 6; ei++) {
-              const evalv = c.exp[ei];
-              const key = parts[ei] + ' Exp';
-              if (!isNaN(evalv)) map[key] = evalv;
-            }
-          }
-          if (!isNaN(c.planned.reduce((a,b)=>a+(isNaN(b)?0:b),0))) map['Total Cost'] = c.planned.reduce((a,b)=>a+(isNaN(b)?0:b),0);
-          if (!isNaN(c.exp.reduce((a,b)=>a+(isNaN(b)?0:b),0))) map['Total Exp'] = c.exp.reduce((a,b)=>a+(isNaN(b)?0:b),0);
-        }
-      } catch(e) { /* ignore */ }
-
     } else {
       if (arr.length > 0 && /^\d+$/.test(arr[0])) arr.shift();
       map['Engineer'] = arr[0] || '';
@@ -210,29 +123,24 @@ function renderTable(rows){
       map['% expenditure'] = arr[20] || '';
       map['Remark'] = arr[21] || '';
       map._raw = arr.slice();
+    }
 
-      // normalize planned/exp using computeSectionsFromRaw so table matches modal
+    // normalize using computeSectionsFromRaw so table matches modal
+    if (map._raw) {
       try {
-        if (map._raw && typeof computeSectionsFromRaw === 'function') {
-          const c = computeSectionsFromRaw(map._raw);
-          const parts = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'];
-          if (Array.isArray(c.planned) && c.planned.length === 6) {
-            for (let pi = 0; pi < 6; pi++) {
-              const pval = c.planned[pi];
-              if (!isNaN(pval)) map[parts[pi]] = pval;
-            }
-          }
-          if (Array.isArray(c.exp) && c.exp.length === 6) {
-            for (let ei = 0; ei < 6; ei++) {
-              const evalv = c.exp[ei];
-              const key = parts[ei] + ' Exp';
-              if (!isNaN(evalv)) map[key] = evalv;
-            }
-          }
-          if (!isNaN(c.planned.reduce((a,b)=>a+(isNaN(b)?0:b),0))) map['Total Cost'] = c.planned.reduce((a,b)=>a+(isNaN(b)?0:b),0);
-          if (!isNaN(c.exp.reduce((a,b)=>a+(isNaN(b)?0:b),0))) map['Total Exp'] = c.exp.reduce((a,b)=>a+(isNaN(b)?0:b),0);
+        const c = computeSectionsFromRaw(map._raw);
+        const parts = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'];
+        if (Array.isArray(c.planned)) {
+          for (let i=0;i<parts.length;i++) if (!isNaN(c.planned[i])) map[parts[i]] = c.planned[i];
         }
-      } catch(e) { /* ignore */ }
+        if (Array.isArray(c.exp)) {
+          for (let i=0;i<parts.length;i++) if (!isNaN(c.exp[i])) map[parts[i]+' Exp'] = c.exp[i];
+        }
+        // recalc totals and coerce to number
+        const totalPl = Array.isArray(c.planned)? c.planned.reduce((a,b)=>a+(isNaN(b)?0:b),0) : NaN;
+        const totalEx = Array.isArray(c.exp)? c.exp.reduce((a,b)=>a+(isNaN(b)?0:b),0) : NaN;
+        if (!isNaN(totalPl)) map['Total Cost'] = totalPl; if (!isNaN(totalEx)) map['Total Exp'] = totalEx;
+      } catch(e){ /* ignore normalization errors */ }
     }
 
     const disp = headers.slice(1).map(h => {
@@ -243,29 +151,28 @@ function renderTable(rows){
         if (!isNaN(n)) v = String(Math.round(n));
       }
       if (h === '% expenditure') {
-        // Try to compute percent from raw arrays (same logic as modal).
         let pctDisplay = '';
         try {
-          const raw = Array.isArray(map._raw) ? map._raw : null;
-          if (raw && typeof computeSectionsFromRaw === 'function') {
-            const c = computeSectionsFromRaw(raw);
-            const tp = Array.isArray(c.planned) ? c.planned.reduce((a,b)=> a + (isNaN(b)?0:b),0) : NaN;
-            const te = Array.isArray(c.exp) ? c.exp.reduce((a,b)=> a + (isNaN(b)?0:b),0) : NaN;
-            if (!isNaN(tp) && tp !== 0 && !isNaN(te)) {
-              pctDisplay = Math.round((te / tp) * 100) + '%';
-            }
+          // 1) prefer computeSectionsFromRaw totals
+          if (map._raw && typeof computeSectionsFromRaw === 'function') {
+            const c = computeSectionsFromRaw(map._raw);
+            const tp = Array.isArray(c.planned)? c.planned.reduce((a,b)=>a+(isNaN(b)?0:b),0) : NaN;
+            const te = Array.isArray(c.exp)? c.exp.reduce((a,b)=>a+(isNaN(b)?0:b),0) : NaN;
+            if (!isNaN(tp) && tp !== 0 && !isNaN(te)) pctDisplay = Math.round((te/tp)*100) + '%';
           }
+          // 2) fallback to Total Exp / Total Cost
           if (!pctDisplay) {
-            // fallback to map value
-            let rawPct = ('' + (v || '')).replace(/%/g,'').trim();
+            const tc = Number(('' + (map['Total Cost'] || '')).replace(/,/g,''));
+            const te = Number(('' + (map['Total Exp'] || '')).replace(/,/g,''));
+            if (!isNaN(tc) && tc !== 0 && !isNaN(te)) pctDisplay = Math.round((te/tc)*100) + '%';
+          }
+          // 3) final fallback: convert stored map value
+          if (!pctDisplay) {
+            let rawPct = (''+v).replace(/%/g,'').trim();
             let pnum = Number(rawPct);
-            if (!isNaN(pnum)) {
-              if (Math.abs(pnum) <= 1) pnum = pnum * 100;
-              pctDisplay = Math.round(pnum) + '%';
-            } else pctDisplay = '';
+            if (!isNaN(pnum)) { if (Math.abs(pnum) <= 1) pnum = pnum * 100; pctDisplay = Math.round(pnum) + '%'; }
           }
         } catch(e) { pctDisplay = (''+v).replace(/%/g,'').trim(); }
-
         v = pctDisplay;
       }
       return v;
@@ -280,55 +187,9 @@ function renderTable(rows){
 
   html += '</tbody></table>';
   out.innerHTML = html;
-
-  installRowClickHandlers();
-  dbg('debugDash','Rendered ' + rows.length + ' rows. (strict mapping used when row length >=23)');
 }
 
-/* row click -> modal (uses computeSectionsFromRaw) */
-function installRowClickHandlers(){
-  const table = qs('dataTable');
-  if (!table) return;
-  table.querySelectorAll('tbody tr').forEach(tr=>{
-    tr.style.cursor = 'pointer';
-    tr.onclick = () => {
-      const p = tr.getAttribute('data-payload');
-      if (!p) return;
-      let payload;
-      try { payload = JSON.parse(decodeHtml(p)); } catch(e){ payload = { _raw: p }; }
-      showModalDetail(payload);
-    };
-  });
-}
-
-/* compute sections (planned cols 8..13, exp 14..19) with swap detection */
-function computeSectionsFromRaw(rawArr){
-  const raw = i => (Array.isArray(rawArr) ? (rawArr[i-1] === undefined ? '' : rawArr[i-1]) : '');
-  function toNum(v){ if (v === null || v === undefined) return NaN; const s = (''+v).replace(/,/g,'').trim(); if (s==='') return NaN; const n = Number(s); return isNaN(n)?NaN:n; }
-  const plannedIdx = [8,9,10,11,12,13];
-  const expIdx =     [14,15,16,17,18,19];
-  const plannedVals = plannedIdx.map(i => toNum(raw(i)));
-  const expVals = expIdx.map(i => toNum(raw(i)));
-  const sum = arr => arr.reduce((s,x)=> s + (isNaN(x)?0:x), 0);
-  const plannedSum = sum(plannedVals), expSum = sum(expVals);
-
-  let swapped = false;
-  if ((Math.abs(plannedSum) < 1e-6 && Math.abs(expSum) > 1e-6) || (plannedSum !== 0 && expSum !==0 && Math.abs(plannedSum) < Math.abs(expSum)*0.4)) {
-    swapped = true;
-  }
-  const finalPlanned = swapped ? expVals : plannedVals;
-  const finalExp = swapped ? plannedVals : expVals;
-
-  return {
-    planned: finalPlanned,
-    exp: finalExp,
-    swapped: swapped,
-    plannedSum: plannedSum,
-    expSum: expSum
-  };
-}
-
-/* Modal: compact grid (no duplicate name) */
+/* Modal + export + rest of app (unchanged) */
 const modalOverlay = qs('modalOverlay'), modalTitle = qs('modalTitle'), modalMeta = qs('modalMeta'), modalBody = qs('modalBody');
 let currentModalData = null;
 
