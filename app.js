@@ -1,5 +1,5 @@
 // ====== Configuration: set your Apps Script URL here ======
-window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbxL2IXyStgCaMbDYef4d6OqmTw7-FuKhmDESKbsVovpBv6dNHa3RplxAqGE3r5nW-ltGw/exec";
+window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbw8_oi2I1JE9QMdil4vS3XXg12MMwvN8Dag4lVNE4OaENbkri26C1LT-xaMg1MA0xRnTw/exec";
 // ============================================================
 
 
