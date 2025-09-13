@@ -117,7 +117,7 @@ function isTotalRow(row){
 
   // 2) first cell empty or non-numeric, but many later cells look numeric => likely a summary/total row
   const first = vals[0] || '';
-  const numLike = vals.reduce((c,v) => c + (/^[\d\-,\.% ]+$/.test(v) ? 1 : 0), 0);
+  const numLike = vals.reduce((c,v) => c + (/^[\d\-,\.\% ]+$/.test(v) ? 1 : 0), 0);
   if ((first === '' || !/^\d+$/.test(first)) && numLike >= Math.max(3, Math.floor(vals.length/3))) return true;
 
   // 3) short row with a "total" label
@@ -206,9 +206,9 @@ if (rows.length > 0) {
         let n = (''+v).replace(/%/g,'').trim();
         let num = Number(n);
         if (!isNaN(num)) {
-          if (num > 0 && num < 2) num = Math.round(num * 100);
-          else num = Math.round(num);
-          v = num + '%';
+          // always convert fraction -> percent and round to integer
+          if (Math.abs(num) <= 1) num = num * 100;
+          v = Math.round(num) + '%';
         } else v = v || '';
       }
       return v;
@@ -323,10 +323,36 @@ function showModalDetail(map){
   html += '<div class="part" style="font-weight:800">Total</div>';
   html += '<div class="cell num" style="font-weight:800">' + (totalPlanned === ''? '': fmt(totalPlanned)) + '</div>';
   html += '<div class="cell num" style="font-weight:800">' + (totalExp === ''? '': fmt(totalExp)) + '</div>';
-  html += '<div class="cell num" style="font-weight:800">' + (totalBal === ''? '': fmt(totalBal)) + '</div>';
+  html += '<div class="cell" style="font-weight:800">' + (totalBal === ''? '': fmt(totalBal)) + '</div>';
   html += '</div>';
 
-  html += '<div style="margin-top:12px;color:var(--muted)"><strong>Category:</strong> ' + escapeHtml(category) + '  &nbsp; | &nbsp; <strong>% Exp:</strong> ' + escapeHtml(pct) + '  &nbsp; | &nbsp; <strong>Balance Mandays:</strong> ' + escapeHtml(balanceMandays) + '</div>';
+  // compute display for % exp using totals if available, else fallback to map value
+  let pctDisplay = '';
+  try {
+    const tp = (typeof totalPlanned === 'number' && !isNaN(totalPlanned) && totalPlanned !== 0) ? totalPlanned : null;
+    const te = (typeof totalExp === 'number' && !isNaN(totalExp)) ? totalExp : null;
+    if (tp !== null && te !== null) {
+      pctDisplay = Math.round((te / tp) * 100) + '%';
+    } else {
+      // fallback: try map value (which may be fraction or already percent)
+      let rawPct = ('' + (pct || '')).replace(/%/g,'').trim();
+      let pnum = Number(rawPct);
+      if (!isNaN(pnum)) {
+        if (Math.abs(pnum) <= 1) pnum = pnum * 100;
+        pctDisplay = Math.round(pnum) + '%';
+      } else pctDisplay = '';
+    }
+  } catch(e) { pctDisplay = ''; }
+
+  // balance mandays display as integer (round)
+  let balMandaysDisplay = '';
+  try {
+    const bm = Number(('' + (balanceMandays || '')).replace(/,/g,''));
+    if (!isNaN(bm)) balMandaysDisplay = String(Math.round(bm));
+    else balMandaysDisplay = (balanceMandays || '');
+  } catch(e){ balMandaysDisplay = (balanceMandays || ''); }
+
+  html += '<div style="margin-top:12px;color:var(--muted)"><strong>Category:</strong> ' + escapeHtml(category) + '  &nbsp; | &nbsp; <strong>% Exp:</strong> ' + escapeHtml(pctDisplay) + '  &nbsp; | &nbsp; <strong>Balance Mandays:</strong> ' + escapeHtml(balMandaysDisplay) + '</div>';
 
   if (map._raw && Array.isArray(map._raw)) html += '<details style="margin-top:10px"><summary>Raw row data (debug)</summary><pre>' + escapeHtml(JSON.stringify(map._raw, null,2)) + '</pre></details>';
 
