@@ -9,6 +9,9 @@ function escapeHtml(s){ return (''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
 function toNum(v){ if (v===null||v===undefined) return NaN; const s=(''+v).replace(/,/g,'').trim(); if(s==='') return NaN; const n=Number(s); return isNaN(n)?NaN:n }
 function fmt(n){ if (n===''||n===null||n===undefined) return ''; if (isNaN(n)) return ''; if (Math.abs(n)>=1000) return Number(n).toLocaleString(); if (Math.abs(n - Math.round(n))>0 && Math.abs(n) < 1) return Number(n).toFixed(4); if (Math.abs(n - Math.round(n))>0) return Number(n).toFixed(4); return String(Math.round(n)) }
 
+/* decode helper for data-payload */
+function decodeHtml(s){ if (s === null || s === undefined) return s; return s.replace(/&quot;/g,'"').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#39;/g,"'") }
+
 /* safe fetch helper */
 async function safeFetchJson(response){
   const txt = await response.text();
@@ -33,49 +36,27 @@ async function callApi(action, method='GET', payload=null){
   }
 }
 
-/* compute sections (planned cols 8..13, exp 14..19) with swap detection */
+/* computeSectionsFromRaw - kept as helper but not required for fixed mapping */
 function computeSectionsFromRaw(rawArr){
   const raw = i => (Array.isArray(rawArr) ? (rawArr[i-1] === undefined ? '' : rawArr[i-1]) : '');
-  function toNum(v){ if (v === null || v === undefined) return NaN; const s = (''+v).replace(/,/g,'').trim(); if (s==='') return NaN; const n = Number(s); return isNaN(n)?NaN:n; }
+  function toNumLocal(v){ if (v === null || v === undefined) return NaN; const s = (''+v).replace(/,/g,'').trim(); if (s==='') return NaN; const n = Number(s); return isNaN(n)?NaN:n; }
+  // Default indices as you specified (1-based)
   const plannedIdx = [8,9,10,11,12,13];
   const expIdx =     [14,15,16,17,18,19];
-  const plannedVals = plannedIdx.map(i => toNum(raw(i)));
-  const expVals = expIdx.map(i => toNum(raw(i)));
-  const sum = arr => arr.reduce((s,x)=> s + (isNaN(x)?0:x), 0);
-  const plannedSum = sum(plannedVals), expSum = sum(expVals);
-
-  let swapped = false;
-  if ((Math.abs(plannedSum) < 1e-6 && Math.abs(expSum) > 1e-6) || (plannedSum !== 0 && expSum !==0 && Math.abs(plannedSum) < Math.abs(expSum)*0.4)) {
-    swapped = true;
-  }
-  const finalPlanned = swapped ? expVals : plannedVals;
-  const finalExp = swapped ? plannedVals : expVals;
-
-  return {
-    planned: finalPlanned,
-    exp: finalExp,
-    swapped: swapped
-  };
+  const planned = plannedIdx.map(i => toNumLocal(raw(i)));
+  const exp = expIdx.map(i => toNumLocal(raw(i)));
+  return { planned: planned, exp: exp, swapped: false };
 }
 
-/* Render table */
+/* ---------- RENDER TABLE (fixed mapping to sheet columns) ---------- */
 function renderTable(rows){
   const out = qs('output'); if (!out) return;
   out.innerHTML = '';
 
-  // defensive normalize: rows might be object-like
+  // normalize rows input to array
   if (!rows) rows = [];
   if (!Array.isArray(rows)) {
     try { rows = Object.values(rows); } catch(e){ rows = []; }
-  }
-
-  // drop trailing total/summary row if present
-  if (rows.length > 0) {
-    const last = rows[rows.length - 1];
-    try {
-      const s = JSON.stringify(last).toLowerCase();
-      if (s.includes('"total"') || s.includes(' total') || s.trim().startsWith('["total')) rows = rows.slice(0, -1);
-    } catch(e){}
   }
 
   if (!rows || rows.length === 0) { out.innerHTML = '<div class="card">No data for selected filters</div>'; return; }
@@ -91,147 +72,108 @@ function renderTable(rows){
   headers.forEach((h)=> html += '<th>' + escapeHtml(h) + '</th>');
   html += '</tr></thead><tbody>';
 
+  // helper preserving zeros
+  const toNumLocal = v => { if (v === null || v === undefined) return NaN; const s = (''+v).replace(/,/g,'').trim(); if (s === '') return NaN; const n = Number(s); return isNaN(n)?NaN:n; };
+
   rows.forEach((r, ridx)=>{
+    // row -> array
     let arr = Array.isArray(r) ? r.slice() : (r && typeof r === 'object' ? Object.values(r) : [r]);
     arr = arr.map(x => x===null||x===undefined? '' : (''+x).trim());
-    while (arr.length && (arr[0] === '' || arr[0] === null || arr[0] === undefined)) arr.shift();
 
-    let map = {};
-    if (arr.length >= 23) {
-      let startIndex = arr.length - 23;
-      const slice = arr.slice(startIndex, startIndex + 23);
-      map['Engineer'] = slice[0] !== undefined ? slice[0] : '';
-      map['Gram Panchayat'] = slice[1] !== undefined ? slice[1] : '';
-      map['Type of work'] = slice[2] !== undefined ? slice[2] : '';
-      map['Name of work'] = slice[3] !== undefined ? slice[3] : '';
-      map['Year of Work'] = slice[4] !== undefined ? slice[4] : '';
-      map['Status'] = slice[5] !== undefined ? slice[5] : '';
-      const skeys = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'];
-      for (let i=0;i<skeys.length;i++) map[skeys[i]] = slice[6 + i] !== undefined ? slice[6 + i] : '';
-      const ekeys = ['Unskilled Exp','Semi-skilled Exp','Skilled Exp','Material Exp','Contingency Exp','Total Exp'];
-      for (let i=0;i<ekeys.length;i++) map[ekeys[i]] = slice[12 + i] !== undefined ? slice[12 + i] : '';
-      map['Category'] = slice[18] !== undefined ? slice[18] : '';
-      map['Balance Mandays'] = slice[19] !== undefined ? slice[19] : '';
-      map['% expenditure'] = slice[20] !== undefined ? slice[20] : '';
-      map['Remark'] = slice[21] !== undefined ? slice[21] : '';
-      map._raw = arr.slice();
-    } else {
-      if (arr.length > 0 && /^\d+$/.test(arr[0])) arr.shift();
-      map['Engineer'] = arr[0] !== undefined ? arr[0] : '';
-      map['Gram Panchayat'] = arr[1] !== undefined ? arr[1] : '';
-      map['Type of work'] = arr[2] !== undefined ? arr[2] : '';
-      map['Name of work'] = arr[3] !== undefined ? arr[3] : '';
-      map['Year of Work'] = arr[4] !== undefined ? arr[4] : '';
-      map['Status'] = arr[5] !== undefined ? arr[5] : '';
-      const skeys = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'];
-      for (let i=0;i<skeys.length;i++) map[skeys[i]] = arr[6 + i] !== undefined ? arr[6 + i] : '';
-      const ekeys = ['Unskilled Exp','Semi-skilled Exp','Skilled Exp','Material Exp','Contingency Exp','Total Exp'];
-      for (let i=0;i<ekeys.length;i++) map[ekeys[i]] = arr[12 + i] !== undefined ? arr[12 + i] : '';
-      map['Category'] = arr[18] !== undefined ? arr[18] : '';
-      map['Balance Mandays'] = arr[19] !== undefined ? arr[19] : '';
-      map['% expenditure'] = arr[20] !== undefined ? arr[20] : '';
-      map['Remark'] = arr[21] !== undefined ? arr[21] : '';
-      map._raw = arr.slice();
+    // Build map using exact sheet columns (1-based -> arr index N-1)
+    const map = {};
+    map['Engineer'] = arr[1] !== undefined ? arr[1] : '';             // col2 (Name of Sub Engg)
+    map['Gram Panchayat'] = arr[2] !== undefined ? arr[2] : '';       // col3
+    map['Type of work'] = arr[3] !== undefined ? arr[3] : '';         // col4
+    map['Name of work'] = arr[4] !== undefined ? arr[4] : '';         // col5
+    map['Year of Work'] = arr[5] !== undefined ? arr[5] : '';         // col6
+    map['Status'] = arr[6] !== undefined ? arr[6] : '';               // col7
+
+    // Planned (cols 8..13)
+    map['Unskilled'] = toNumLocal(arr[7]);
+    map['Semi-skilled'] = toNumLocal(arr[8]);
+    map['Skilled'] = toNumLocal(arr[9]);
+    map['Material'] = toNumLocal(arr[10]);
+    map['Contingency'] = toNumLocal(arr[11]);
+    // Use sheet-provided Total Cost in col13 if present
+    const sheetTotalCost = toNumLocal(arr[12]);
+    map['Total Cost'] = !isNaN(sheetTotalCost) ? sheetTotalCost : NaN;
+
+    // Expenditure (cols 14..19)
+    map['Unskilled Exp'] = toNumLocal(arr[13]);
+    map['Semi-skilled Exp'] = toNumLocal(arr[14]);
+    map['Skilled Exp'] = toNumLocal(arr[15]);
+    map['Material Exp'] = toNumLocal(arr[16]);
+    map['Contingency Exp'] = toNumLocal(arr[17]);
+    // Use sheet-provided Total Exp in col19 if present
+    const sheetTotalExp = toNumLocal(arr[18]);
+    map['Total Exp'] = !isNaN(sheetTotalExp) ? sheetTotalExp : NaN;
+
+    // Category / Balance Mandays / % / Remark (cols 20..23)
+    map['Category'] = arr[19] !== undefined ? arr[19] : '';
+    map['Balance Mandays'] = arr[20] !== undefined ? arr[20] : '';
+    map['% expenditure'] = arr[21] !== undefined ? arr[21] : '';
+    map['Remark'] = arr[22] !== undefined ? arr[22] : '';
+
+    // If sheet didn't provide Total Cost or Total Exp, fallback to computed sums from components
+    try {
+      if (isNaN(map['Total Cost'])) {
+        const totalPl = [map['Unskilled'],map['Semi-skilled'],map['Skilled'],map['Material'],map['Contingency']].reduce((a,b)=> a + (isNaN(b)?0:b), 0);
+        if (!isNaN(totalPl) && totalPl !== 0) map['Total Cost'] = totalPl;
+      }
+      if (isNaN(map['Total Exp'])) {
+        const totalEx = [map['Unskilled Exp'],map['Semi-skilled Exp'],map['Skilled Exp'],map['Material Exp'],map['Contingency Exp']].reduce((a,b)=> a + (isNaN(b)?0:b), 0);
+        if (!isNaN(totalEx) && totalEx !== 0) map['Total Exp'] = totalEx;
+      }
+    } catch(e){ /* noop */ }
+
+    // compute balances planned - exp (preserve numeric/blank rules)
+    function comp(pl, ex){
+      const p = toNumLocal(pl), e = toNumLocal(ex);
+      if (isNaN(p) && isNaN(e)) return '';
+      if (isNaN(p) && !isNaN(e)) return (0 - e);
+      if (!isNaN(p) && isNaN(e)) return p;
+      return (p - e);
     }
+    map['Unskilled Balance'] = comp(map['Unskilled'], map['Unskilled Exp']);
+    map['Semi-skilled Balance'] = comp(map['Semi-skilled'], map['Semi-skilled Exp']);
+    map['Skilled Balance'] = comp(map['Skilled'], map['Skilled Exp']);
+    map['Material Balance'] = comp(map['Material'], map['Material Exp']);
+    map['Contingency Balance'] = comp(map['Contingency'], map['Contingency Exp']);
+    map['Total Balance'] = comp(map['Total Cost'], map['Total Exp']);
 
-    // normalize using computeSectionsFromRaw so table matches modal
-    if (map._raw) {
-      try {
-        // primary: use computeSectionsFromRaw (handles swapped columns)
-        const c = computeSectionsFromRaw(map._raw);
-        let usedPlanned = Array.isArray(c.planned) ? c.planned.slice() : null;
-        let usedExp = Array.isArray(c.exp) ? c.exp.slice() : null;
+    // keep raw for modal
+    map._raw = arr.slice();
 
-        function toNumLocal(v){ const s = (''+v).replace(/,/g,'').trim(); if (s==='') return NaN; const n = Number(s); return isNaN(n)?NaN:n; }
-        function isMostlyNumeric(arr){ if (!Array.isArray(arr)) return false; let cnt=0; for(const x of arr) if (!isNaN(Number((''+x).toString().replace(/,/g,'')))) cnt++; return cnt>=4; }
-
-        // fallback: detect numeric clusters in raw array if primary result is weak
-        if (!isMostlyNumeric(usedPlanned) || !isMostlyNumeric(usedExp)) {
-          const raw = map._raw.map(x => (x===null||x===undefined)?'':(''+x).trim());
-          const clusters = [];
-          let i=0;
-          while(i<raw.length){
-            // skip blanks
-            if (raw[i]===''){ i++; continue; }
-            // extend numeric run
-            let j=i; const run=[];
-            while(j<raw.length && !isNaN(toNumLocal(raw[j]))){ run.push(toNumLocal(raw[j])); j++; }
-            if (run.length>=6) clusters.push({start:i, len: run.length, vals: run});
-            i = (j===i)? i+1 : j;
-          }
-
-          if (clusters.length>=2){
-            usedPlanned = clusters[0].vals.slice(0,6);
-            usedExp = clusters[1].vals.slice(0,6);
-          } else if (clusters.length===1 && clusters[0].len>=12){
-            usedPlanned = clusters[0].vals.slice(0,6);
-            usedExp = clusters[0].vals.slice(6,12);
-          } else {
-            // as last resort leave computeSectionsFromRaw values (even if partially numeric)
-            if (!isMostlyNumeric(usedPlanned)) usedPlanned = usedPlanned || [NaN,NaN,NaN,NaN,NaN,NaN];
-            if (!isMostlyNumeric(usedExp)) usedExp = usedExp || [NaN,NaN,NaN,NaN,NaN,NaN];
-          }
-        }
-
-        const parts = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'];
-        if (Array.isArray(usedPlanned) && usedPlanned.length>=6){ for(let k=0;k<6;k++) if(!isNaN(usedPlanned[k])) map[parts[k]] = usedPlanned[k]; }
-        if (Array.isArray(usedExp) && usedExp.length>=6){ for(let k=0;k<6;k++) if(!isNaN(usedExp[k])) map[parts[k]+' Exp'] = usedExp[k]; }
-
-        // recalc totals defensively
-        try{
-          const totalPl = Array.isArray(usedPlanned)? usedPlanned.reduce((a,b)=> a + (isNaN(b)?0:b),0) : NaN;
-          const totalEx = Array.isArray(usedExp)? usedExp.reduce((a,b)=> a + (isNaN(b)?0:b),0) : NaN;
-          if (!isNaN(totalPl)) map['Total Cost'] = totalPl;
-          if (!isNaN(totalEx)) map['Total Exp'] = totalEx;
-        }catch(e){}
-      } catch(e){ console.warn('Normalization error', e); }
-    }
-
-    // Prepare display values: IMPORTANT - preserve zero (0) values
+    // Prepare display values (preserve zero)
     const disp = headers.slice(1).map(h => {
       let rawv = (map.hasOwnProperty(h) ? map[h] : '');
-      // treat empty string, null, undefined as ''
       if (rawv === null || rawv === undefined) rawv = '';
-      // For numeric fields, keep numeric values (including 0)
+
       if (h === 'Engineer') {
         let v = (''+rawv).replace(/^\s*\d+\s*[\.\-\)\:]*\s*/,'').trim();
         return v;
       }
+
       if (h === 'Balance Mandays') {
         const n = Number((''+rawv).replace(/,/g,''));
         if (!isNaN(n)) return String(Math.round(n));
         return (rawv===''? '': ''+rawv);
       }
+
       if (h === '% expenditure') {
-        // Compute percent from totals first
-        let pctDisplay = '';
-        try {
-          const raw = Array.isArray(map._raw) ? map._raw : null;
-          if (raw && typeof computeSectionsFromRaw === 'function') {
-            const c = computeSectionsFromRaw(raw);
-            const tp = Array.isArray(c.planned)? c.planned.reduce((a,b)=> a + (isNaN(b)?0:b),0) : NaN;
-            const te = Array.isArray(c.exp)? c.exp.reduce((a,b)=> a + (isNaN(b)?0:b),0) : NaN;
-            if (!isNaN(tp) && tp !== 0 && !isNaN(te)) pctDisplay = Math.round((te / tp) * 100) + '%';
-          }
-          if (!pctDisplay) {
-            const tc = Number(('' + (map['Total Cost'] || '')).replace(/,/g,'')); // already normalized possibly
-            const te = Number(('' + (map['Total Exp'] || '')).replace(/,/g,''));
-            if (!isNaN(tc) && tc !== 0 && !isNaN(te)) pctDisplay = Math.round((te / tc) * 100) + '%';
-          }
-          if (!pctDisplay) {
-            let rawPct = ('' + (rawv || '')).replace(/%/g,'').trim();
-            let pnum = Number(rawPct);
-            if (!isNaN(pnum)) {
-              if (Math.abs(pnum) <= 1) pnum = pnum * 100;
-              pctDisplay = Math.round(pnum) + '%';
-            }
-          }
-        } catch(e){ pctDisplay = (''+rawv).replace(/%/g,'').trim(); }
-        return pctDisplay;
+        // prefer sheet value (may be '1%' or '0.01' or '0.01%')
+        let rv = ('' + (rawv || '')).toString().trim();
+        if (rv === '') return '';
+        if (rv.indexOf('%') !== -1) return rv;
+        let pnum = Number(rv);
+        if (isNaN(pnum)) return rv;
+        if (Math.abs(pnum) <= 1) pnum = pnum * 100;
+        return Math.round(pnum) + '%';
       }
 
-      // For everything else: return string form (preserve 0)
       if (rawv === '') return '';
+      // For numeric values, show original (no rounding here), but stringify
       return (''+rawv).trim();
     });
 
@@ -246,10 +188,10 @@ function renderTable(rows){
   out.innerHTML = html;
 
   installRowClickHandlers();
-  dbg('debugDash','Rendered ' + rows.length + ' rows. (mapping uses normalization when possible)');
+  dbg('debugDash','Rendered ' + rows.length + ' rows (sheet-mapped).');
 }
 
-/* row click -> modal (uses computeSectionsFromRaw) */
+/* row click -> modal */
 function installRowClickHandlers(){
   const table = qs('dataTable');
   if (!table) return;
@@ -265,7 +207,7 @@ function installRowClickHandlers(){
   });
 }
 
-/* Modal: compact grid (no duplicate name) */
+/* Modal: show Particular / Section / Expenditure / Balance using mapped columns */
 const modalOverlay = qs('modalOverlay'), modalTitle = qs('modalTitle'), modalMeta = qs('modalMeta'), modalBody = qs('modalBody');
 let currentModalData = null;
 
@@ -277,26 +219,34 @@ function showModalDetail(map){
   const year = map['Year of Work'] || map['Year'] || '';
   const status = map['Status'] || '';
   const category = map['Category'] || '';
-  const pct = map['% expenditure'] || '';
-  const balanceMandays = map['Balance Mandays'] || '';
+  const pctRaw = map['% expenditure'] || '';
+  const balanceMandaysRaw = map['Balance Mandays'] || '';
 
   if (modalTitle) modalTitle.textContent = name || 'Work Details';
   if (modalMeta) modalMeta.textContent = gp + (type? ('  |  ' + type):'') + (year? ('  |  ' + year):'') + (status? ('  |  ' + status):'');
 
-  const raw = Array.isArray(map._raw)? map._raw : null;
-  let plannedArr = [], expArr = [], swapped=false;
-  if (raw){ const c = computeSectionsFromRaw(raw); plannedArr = c.planned; expArr = c.exp; swapped = c.swapped; }
-  else {
-    plannedArr = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'].map(k=> toNum(map[k]));
-    expArr = ['Unskilled Exp','Semi-skilled Exp','Skilled Exp','Material Exp','Contingency Exp','Total Exp'].map(k=> toNum(map[k]));
-  }
+  // Planned and Exp arrays (explicit mapping)
+  const plannedArr = [
+    toNum(map['Unskilled']),
+    toNum(map['Semi-skilled']),
+    toNum(map['Skilled']),
+    toNum(map['Material']),
+    toNum(map['Contingency']),
+    toNum(map['Total Cost'])
+  ];
+  const expArr = [
+    toNum(map['Unskilled Exp']),
+    toNum(map['Semi-skilled Exp']),
+    toNum(map['Skilled Exp']),
+    toNum(map['Material Exp']),
+    toNum(map['Contingency Exp']),
+    toNum(map['Total Exp'])
+  ];
 
-  let html = '';
-  if (swapped) html += '<div class="swap-note">Note: planned/expenditure columns looked swapped in source; values were recalculated.</div>';
-
-  html += '<div class="sections-grid">';
-  html += '<div class="hdr">Particular</div><div class="hdr">Section</div><div class="hdr">Expenditure</div><div class="hdr">Balance</div>';
   const parts = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'];
+
+  let html = '<div class="sections-grid">';
+  html += '<div class="hdr">Particular</div><div class="hdr">Section</div><div class="hdr">Expenditure</div><div class="hdr">Balance</div>';
   for (let i=0;i<6;i++){
     const s = (!isNaN(plannedArr[i])? plannedArr[i] : '');
     const e = (!isNaN(expArr[i])? expArr[i] : '');
@@ -311,40 +261,38 @@ function showModalDetail(map){
     html += '<div class="cell num">' + (bal === ''? '': fmt(bal)) + '</div>';
   }
 
+  // totals row
   const totalPlanned = plannedArr.reduce? plannedArr.reduce((a,b)=> a + (isNaN(b)?0:b),0) : '';
   const totalExp = expArr.reduce? expArr.reduce((a,b)=> a + (isNaN(b)?0:b),0) : '';
   const totalBal = (totalPlanned !== '' && totalExp !== '')? (totalPlanned - totalExp) : '';
   html += '<div class="part" style="font-weight:800">Total</div>';
   html += '<div class="cell num" style="font-weight:800">' + (totalPlanned === ''? '': fmt(totalPlanned)) + '</div>';
   html += '<div class="cell num" style="font-weight:800">' + (totalExp === ''? '': fmt(totalExp)) + '</div>';
-  html += '<div class="cell" style="font-weight:800">' + (totalBal === ''? '': fmt(totalBal)) + '</div>';
-  html += '</div>';
+  html += '<div class="cell num" style="font-weight:800">' + (totalBal === ''? '': fmt(totalBal)) + '</div>';
+  html += '</div>'; // end grid
 
-  // compute display for % exp using totals if available, else fallback to map value
+  // display % exp (prefer sheet value, else compute from totals)
   let pctDisplay = '';
   try {
-    const tp = (typeof totalPlanned === 'number' && !isNaN(totalPlanned) && totalPlanned !== 0) ? totalPlanned : null;
-    const te = (typeof totalExp === 'number' && !isNaN(totalExp)) ? totalExp : null;
-    if (tp !== null && te !== null) {
-      pctDisplay = Math.round((te / tp) * 100) + '%';
-    } else {
-      // fallback: try map value (which may be fraction or already percent)
-      let rawPct = ('' + (pct || '')).replace(/%/g,'').trim();
-      let pnum = Number(rawPct);
-      if (!isNaN(pnum)) {
-        if (Math.abs(pnum) <= 1) pnum = pnum * 100;
-        pctDisplay = Math.round(pnum) + '%';
-      } else pctDisplay = '';
-    }
-  } catch(e) { pctDisplay = ''; }
+    if (pctRaw !== '' && pctRaw !== null && pctRaw !== undefined) {
+      let s = (''+pctRaw).replace(/%/g,'').trim();
+      let num = Number(s);
+      if (!isNaN(num)) {
+        if (Math.abs(num) <= 1) num = num * 100;
+        pctDisplay = Math.round(num) + '%';
+      } else pctDisplay = s;
+    } else if (!isNaN(totalPlanned) && totalPlanned !== 0 && !isNaN(totalExp)) {
+      pctDisplay = Math.round((totalExp / totalPlanned) * 100) + '%';
+    } else pctDisplay = '';
+  } catch(e){ pctDisplay = ''; }
 
-  // balance mandays display as integer (round)
+  // balance mandays as integer
   let balMandaysDisplay = '';
   try {
-    const bm = Number(('' + (balanceMandays || '')).replace(/,/g,''));
+    const bm = Number(('' + (balanceMandaysRaw || '')).replace(/,/g,''));
     if (!isNaN(bm)) balMandaysDisplay = String(Math.round(bm));
-    else balMandaysDisplay = (balanceMandays || '');
-  } catch(e){ balMandaysDisplay = (balanceMandays || ''); }
+    else balMandaysDisplay = (balanceMandaysRaw || '');
+  } catch(e){ balMandaysDisplay = (balanceMandaysRaw || ''); }
 
   html += '<div style="margin-top:12px;color:var(--muted)"><strong>Category:</strong> ' + escapeHtml(category) + '  &nbsp; | &nbsp; <strong>% Exp:</strong> ' + escapeHtml(pctDisplay) + '  &nbsp; | &nbsp; <strong>Balance Mandays:</strong> ' + escapeHtml(balMandaysDisplay) + '</div>';
 
@@ -353,20 +301,18 @@ function showModalDetail(map){
   if (modalBody) modalBody.innerHTML = html;
   openModal();
 }
+
 function openModal(){ if(modalOverlay){ modalOverlay.style.display = 'flex'; document.body.style.overflow='hidden'; modalOverlay.setAttribute('aria-hidden','false') } }
 function closeModal(){ if(modalOverlay){ modalOverlay.style.display = 'none'; document.body.style.overflow='auto'; modalOverlay.setAttribute('aria-hidden','true'); if(qs('modalBody')) qs('modalBody').innerHTML = '' } }
 if (qs('modalClose')) qs('modalClose').addEventListener('click', closeModal)
 if (modalOverlay) modalOverlay.addEventListener('click', function(e){ if (e.target === modalOverlay) closeModal() })
 
-/* modal export */
+/* modal export (keeps existing behavior) */
 if (qs('modalExport')) qs('modalExport').addEventListener('click', function(){
-  const map = currentModalData; if (!map) return alert('No data'); const raw = Array.isArray(map._raw)? map._raw : null;
-  let planned=[], exp=[];
-  if(raw){ const c = computeSectionsFromRaw(raw); planned=c.planned; exp=c.exp }
-  else {
-    planned = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'].map(k=> toNum(map[k]));
-    exp = ['Unskilled Exp','Semi-skilled Exp','Skilled Exp','Material Exp','Contingency Exp','Total Exp'].map(k=> toNum(map[k]));
-  }
+  const map = currentModalData; if (!map) return alert('No data'); 
+  const planned = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'].map(k=> toNum(map[k]));
+  const exp = ['Unskilled Exp','Semi-skilled Exp','Skilled Exp','Material Exp','Contingency Exp','Total Exp'].map(k=> toNum(map[k]));
+
   const rows = []; rows.push(['Name of work', map['Name of work'] || '']); rows.push(['Gram Panchayat', map['Gram Panchayat'] || '']); rows.push([]); rows.push(['Particular','Section','Expenditure','Balance']);
   const parts = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'];
   for(let i=0;i<6;i++){
@@ -391,7 +337,7 @@ if (qs('modalExport')) qs('modalExport').addEventListener('click', function(){
   const a = document.createElement('a'); a.href = url; a.download = ((map['Name of work']||'work').toString().replace(/[^\w\-]/g,'_').slice(0,60)) + '_details.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 });
 
-/* export main table */
+/* export main table (existing) */
 if (qs('exportBtn')) qs('exportBtn').addEventListener('click', ()=> {
   const table = qs('dataTable'); if (!table) return alert('No table to export');
   const rows = Array.from(table.querySelectorAll('thead tr, tbody tr'));
@@ -399,7 +345,7 @@ if (qs('exportBtn')) qs('exportBtn').addEventListener('click', ()=> {
     const cells = Array.from(tr.querySelectorAll('th,td')).map(td=>{
       let txt = td.innerText.replace(/\r?\n/g,' ').trim();
       if (txt.indexOf('"') !== -1) txt = txt.replace(/"/g,'""');
-      if (txt.indexOf(',') !== -1 || txt.indexOf('"')!==-1) return '"' + txt + '"';
+      if (txt.indexOf(',') !==  -1 || txt.indexOf('"')!==-1) return '"' + txt + '"';
       return txt;
     });
     return cells.join(',');
@@ -409,83 +355,7 @@ if (qs('exportBtn')) qs('exportBtn').addEventListener('click', ()=> {
   const a = document.createElement('a'); a.href = url; a.download = 'works_dashboard.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 });
 
-/* Create / Update user (demo) */
-async function loadOptionsCreate(){
-  try {
-    const postsRes = await callApi('getPostOptionsFromUserIdSheet','GET');
-    const posts = (postsRes && postsRes.result) ? postsRes.result : (Array.isArray(postsRes)?postsRes:[]);
-    const postSel = qs('c_post'); if (postSel) postSel.innerHTML = '<option value="">--select post--</option>';
-    (posts||[]).forEach(p=>{ if(postSel){ const o=document.createElement('option'); o.value=p; o.textContent=p; postSel.appendChild(o); } });
-
-    const pansRes = await callApi('getPanchayatOptionsFromUserIdSheet','GET');
-    let pans = (pansRes && pansRes.result) ? pansRes.result : (Array.isArray(pansRes)?pansRes:[]);
-    if (!pans || pans.length===0) {
-      const fallback = await callApi('getAllPanchayatsFromSheet1','GET');
-      pans = (fallback && fallback.result) ? fallback.result : (Array.isArray(fallback)?fallback:[]);
-    }
-    const sel = qs('c_panchayats'); if (sel) sel.innerHTML = '';
-    (pans||[]).forEach(p=>{ if(sel){ const o=document.createElement('option'); o.value=p; o.textContent=p; sel.appendChild(o); } });
-
-    dbg('debugCreate',{posts:posts,panchayats:pans});
-  } catch(err){ dbg('debugCreate',{error:String(err)}); }
-}
-if (qs('btnSave')) qs('btnSave').addEventListener('click', async ()=>{
-  const name = qs('c_name')?qs('c_name').value.trim() : '';
-  const post = qs('c_post')?qs('c_post').value.trim():'';
-  const engg = qs('c_engg')?qs('c_engg').value.trim():'';
-  const dcode = qs('c_dcode')?qs('c_dcode').value.trim() || '77':'77';
-  const sel = qs('c_panchayats'); const pans = sel?Array.from(sel.selectedOptions).map(o=>o.value):[];
-  if (!name || !post || pans.length===0) { if(qs('statusCreate')) qs('statusCreate').innerText = 'Fill name, post and select at least 1 panchayat'; return; }
-  if(qs('btnSave')) qs('btnSave').disabled = true; if(qs('statusCreate')) qs('statusCreate').innerText = 'Saving (demo)...';
-  try {
-    const payload = { name: name, post: post, dcode: dcode, panchayats: pans, engg: engg };
-    const res = await callApi('appendOrUpdateUser','POST', payload);
-    dbg('debugCreate',{saveRes:res});
-    if (res && (res.ok || res.result) && res.result && (res.result.action === 'created' || res.result.action === 'updated')) {
-      if(qs('statusCreate')) qs('statusCreate').innerText = 'Saved (demo): ' + res.result.userid;
-      if(typeof tabDashboard !== 'undefined' && tabDashboard) tabDashboard.click(); if(qs('loginInput')) qs('loginInput').value = res.result.userid; doLogin(res.result.userid);
-    } else {
-      if(qs('statusCreate')) qs('statusCreate').innerText = 'Save (demo) failed: ' + (res && res.error ? res.error : JSON.stringify(res));
-    }
-  } catch(err){ if(qs('statusCreate')) qs('statusCreate').innerText = 'Save (demo) error: ' + String(err); dbg('debugCreate',{saveException:String(err)}); }
-  finally{ if(qs('btnSave')) qs('btnSave').disabled = false; }
-});
-
-/* utilities */
-function decodeHtml(s){ if (s === null || s === undefined) return s; return s.replace(/&quot;/g,'"').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#39;/g,"'") }
-function roundTo(n,d){ if (!isFinite(n)) return n; const p=Math.pow(10,d||4); return Math.round(n*p)/p; }
-
-/* tabs */
-const tabDashboard = qs('tabDashboard'), tabCreate = qs('tabCreate');
-if (tabDashboard) tabDashboard.addEventListener('click', ()=>{ tabDashboard.classList.add('active'); if(tabCreate) tabCreate.classList.remove('active'); if(qs('panelDashboard')) qs('panelDashboard').style.display='block'; if(qs('panelCreate')) qs('panelCreate').style.display='none'; });
-if (tabCreate) tabCreate.addEventListener('click', ()=>{ tabCreate.classList.add('active'); if(tabDashboard) tabDashboard.classList.remove('active'); if(qs('panelCreate')) qs('panelCreate').style.display='block'; if(qs('panelDashboard')) qs('panelDashboard').style.display='none'; if (!window._createLoaded) { loadOptionsCreate(); window._createLoaded = true; } });
-
-/* init */
-async function init(){
-  if (!window.APPSCRIPT_URL || window.APPSCRIPT_URL.trim() === '') { dbg('debugDash','Set window.APPSCRIPT_URL'); return; }
-  try {
-    const dd = await callApi('getDropdownData','GET');
-    if (dd && dd.ok && dd.data) {
-      const dt = dd.data;
-      if (qs('lastUpdate')) qs('lastUpdate').innerText = 'Last Update: ' + (dt.updateTime || '');
-      populate('year', dt.years || []);
-      populate('work', dt.works || []);
-      populate('status', dt.status || []);
-      populate('category', dt.categories || []);
-      populate('engineer', dt.engineers || []);
-      window._gpsByEngineer = dt.gpsByEngineer || {};
-      dbg('debugDash',{dropdowns:dt});
-    } else dbg('debugDash',{error:dd});
-  } catch(err){ dbg('debugDash',{error:String(err)}); }
-
-  // if user already set in loginInput, try to fetch table
-  const userid = qs('loginInput')?qs('loginInput').value.trim():'';
-  if (userid) {
-    try { await fetchTable({}, userid); } catch(e){ dbg('debugDash',{error:String(e)}); }
-  }
-}
-
-/* populate dropdown helper (used in init) */
+/* populate helper */
 function populate(id, arr){ const sel = qs(id); if(!sel) return; const cur = sel.value; sel.innerHTML = '<option value="">--All--</option>'; (arr||[]).forEach(v=>{ const o=document.createElement('option'); o.value=v; o.textContent=v; sel.appendChild(o); }); if (cur) sel.value = cur; }
 
 /* fetch table */
@@ -531,5 +401,30 @@ async function doLogin(val){
   } catch(err){ dbg('debugDash',{loginError:String(err)}); alert('Login error: '+String(err)); }
 }
 
-/* init run */
+/* init */
+async function init(){
+  if (!window.APPSCRIPT_URL || window.APPSCRIPT_URL.trim() === '') { dbg('debugDash','Set window.APPSCRIPT_URL'); return; }
+  try {
+    const dd = await callApi('getDropdownData','GET');
+    if (dd && dd.ok && dd.data) {
+      const dt = dd.data;
+      if (qs('lastUpdate')) qs('lastUpdate').innerText = 'Last Update: ' + (dt.updateTime || '');
+      populate('year', dt.years || []);
+      populate('work', dt.works || []);
+      populate('status', dt.status || []);
+      populate('category', dt.categories || []);
+      populate('engineer', dt.engineers || []);
+      window._gpsByEngineer = dt.gpsByEngineer || {};
+      dbg('debugDash',{dropdowns:dt});
+    } else dbg('debugDash',{error:dd});
+  } catch(err){ dbg('debugDash',{error:String(err)}); }
+
+  // if user already set in loginInput, try to fetch table
+  const userid = qs('loginInput')?qs('loginInput').value.trim():'';
+  if (userid) {
+    try { await fetchTable({}, userid); } catch(e){ dbg('debugDash',{error:String(e)}); }
+  }
+}
+
+/* start */
 (async function(){ await init(); })();
