@@ -15,25 +15,34 @@ function decodeHtml(s){ if (s === null || s === undefined) return s; return s.re
 
 /* safe fetch helper */
 async function safeFetchJson(response){
-  const txt = await response.text();
-  try { return JSON.parse(txt); }
-  catch(e){ return { ok:false, error:'non-json-response', status: response.status, statusText: response.statusText, raw: txt }; }
+  try {
+    const txt = await response.text();
+    try { return JSON.parse(txt); }
+    catch(e){ return { ok:false, error:'non-json-response', status: response.status, statusText: response.statusText, raw: txt }; }
+  } catch(err){
+    return { ok:false, error: String(err) };
+  }
 }
 
-/* network (GET/POST) - resilient to HTML/404 responses */
+/* network (GET/POST) - resilient to HTML/404 responses and fetch errors */
 async function callApi(action, method='GET', payload=null){
-  if (!window.APPSCRIPT_URL) return Promise.reject(new Error('APPSCRIPT_URL not set'));
-  if (method === 'GET') {
-    const u = new URL(window.APPSCRIPT_URL);
-    u.searchParams.set('action', action);
-    if (payload && typeof payload === 'object') Object.keys(payload).forEach(k=>u.searchParams.set(k, typeof payload[k]==='string'? payload[k]: JSON.stringify(payload[k])));
-    const resp = await fetch(u.toString(), { method:'GET', mode:'cors' });
-    return safeFetchJson(resp);
-  } else {
-    const params = new URLSearchParams(); params.set('action', action);
-    if (payload && typeof payload === 'object') Object.keys(payload).forEach(k=>{ const v = payload[k]; params.set(k, typeof v === 'object' ? JSON.stringify(v) : String(v)); });
-    const resp = await fetch(window.APPSCRIPT_URL, { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8' }, body: params.toString(), mode:'cors' });
-    return safeFetchJson(resp);
+  if (!window.APPSCRIPT_URL) return { ok:false, error: 'APPSCRIPT_URL not set' };
+  try {
+    if (method === 'GET') {
+      const u = new URL(window.APPSCRIPT_URL);
+      u.searchParams.set('action', action);
+      if (payload && typeof payload === 'object') Object.keys(payload).forEach(k=>u.searchParams.set(k, typeof payload[k]==='string'? payload[k]: JSON.stringify(payload[k])));
+      const resp = await fetch(u.toString(), { method:'GET', mode:'cors' });
+      return await safeFetchJson(resp);
+    } else {
+      const params = new URLSearchParams(); params.set('action', action);
+      if (payload && typeof payload === 'object') Object.keys(payload).forEach(k=>{ const v = payload[k]; params.set(k, typeof v === 'object' ? JSON.stringify(v) : String(v)); });
+      const resp = await fetch(window.APPSCRIPT_URL, { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8' }, body: params.toString(), mode:'cors' });
+      return await safeFetchJson(resp);
+    }
+  } catch(err){
+    // Return structured error so caller sees reason
+    return { ok:false, error: 'fetch-exception: ' + String(err) };
   }
 }
 
@@ -154,7 +163,7 @@ function renderTable(rows){
       }
 
       if (h === 'Balance Mandays') {
-        const n = Number((''+rawv).replace(/,/g,''));
+        const n = Number((''+rawv).replace(/,/g,'')); 
         if (!isNaN(n)) return String(Math.round(n));
         return (rawv===''? '': ''+rawv);
       }
@@ -351,19 +360,118 @@ if (qs('exportBtn')) qs('exportBtn').addEventListener('click', ()=> {
   const a = document.createElement('a'); a.href = url; a.download = 'works_dashboard.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 });
 
-/* populate helper */
-function populate(id, arr){ const sel = qs(id); if(!sel) return; const cur = sel.value; sel.innerHTML = '<option value="">--All--</option>'; (arr||[]).forEach(v=>{ const o=document.createElement('option'); o.value=v; o.textContent=v; sel.appendChild(o); }); if (cur) sel.value = cur; }
+/* safer populate (replace existing populate) */
+function populate(id, arr){
+  const sel = qs(id);
+  if(!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">--All--</option>';
+  (arr||[]).forEach(v=>{
+    if (v === null || v === undefined) return;
+    const sv = (''+v).trim();
+    if (sv === '') return;
+    const o = document.createElement('option');
+    o.value = sv;
+    o.textContent = sv;
+    sel.appendChild(o);
+  });
+  try { if (cur) sel.value = cur; } catch(e){}
+}
 
-/* fetch table */
+/* clean category list: removes blanks, 'total', pure-numeric junk, duplicates */
+function cleanCategoryList(arr){
+  if (!Array.isArray(arr)) return [];
+  const seen = new Set();
+  const out = [];
+  for (let x of arr) {
+    if (x === null || x === undefined) continue;
+    let s = ('' + x).trim();
+    if (s === '') continue;
+    const low = s.toLowerCase();
+    if (low === 'total' || low === 'na' || low === 'n/a') continue;
+    if (/^[\d\.\-\,\s]+$/.test(s)) continue;
+    s = s.replace(/\s+/g,' ').trim();
+    if (seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  out.sort();
+  return out;
+}
+
+/* helper: ensure filter keys exist and are strings (trimmed) */
+function sanitizeFilter(input){
+  const keys = ['engineer','gp','work','status','year','search'];
+  const out = {};
+  input = input || {};
+  keys.forEach(k=>{
+    let v = input[k];
+    if (v === null || v === undefined) { out[k] = ''; return; }
+    if (typeof v === 'string') v = v.trim();
+    else v = (''+v).trim();
+    out[k] = v;
+  });
+  return out;
+}
+
+/* get filter values from UI controls */
+function getFilterFromUI(){
+  const keys = { engineer: 'engineer', gp: 'gp', work: 'work', status: 'status', year: 'year', search: 'searchInput' };
+  const out = {};
+  Object.keys(keys).forEach(k=>{
+    const elId = keys[k];
+    const el = document.getElementById(elId);
+    if (!el) { out[k] = ''; return; }
+    let v = (el.value === undefined ? '' : el.value);
+    v = (''+v).trim();
+    if (v === '--All--') v = '';
+    out[k] = v;
+  });
+  return out;
+}
+
+/* fetch table (sanitized + robust to response shapes) */
 async function fetchTable(filter, userid){
   try {
     if (!userid) { alert('Please login first'); return; }
-    const res = await callApi('getFilteredData','POST',{ filter: filter, userid: userid });
+
+    // sanitize filter before sending
+    const filt = sanitizeFilter(filter || {});
+    dbg('debugDash',{ sendingFilter: filt, userid: userid });
+
+    // call API - keep same callApi signature (it posts x-www-form-urlencoded)
+    const res = await callApi('getFilteredData','POST',{ filter: filt, userid: userid });
+
     dbg('debugDash',{filteredRes:res});
     let rows = [];
-    if (res && res.ok && res.rows) rows = res.rows;
-    else if (Array.isArray(res)) rows = res;
-    else if (res && res.rows) rows = res.rows;
+
+    // handle different shapes returned by backend
+    // common shapes:
+    //  { ok:true, rows: [...] }
+    //  { ok:true, data: { rows: [...] } }
+    //  { rows: [...] } (older)
+    //  array directly
+    if (!res) {
+      rows = [];
+    } else if (Array.isArray(res)) {
+      rows = res;
+    } else if (res.rows && Array.isArray(res.rows)) {
+      rows = res.rows;
+    } else if (res.result && Array.isArray(res.result)) {
+      rows = res.result;
+    } else if (res.data && res.data.rows && Array.isArray(res.data.rows)) {
+      rows = res.data.rows;
+    } else if (res.ok && res.rows && Array.isArray(res.rows)) {
+      rows = res.rows;
+    } else {
+      // nothing matched — maybe backend returned {ok:true, rows:[]} or error
+      if (res.ok && res.rows === undefined) {
+        // maybe older backend returns the array inside res (rare) - try keys
+        const candidate = Object.keys(res).find(k => Array.isArray(res[k]) && res[k].length && Array.isArray(res[k][0]));
+        if (candidate) rows = res[candidate];
+      }
+    }
+
     renderTable(rows);
   } catch(err){ dbg('debugDash',{fetchTableError:String(err)}); }
 }
@@ -397,7 +505,69 @@ async function doLogin(val){
   } catch(err){ dbg('debugDash',{loginError:String(err)}); alert('Login error: '+String(err)); }
 }
 
-/* init */
+/* Apply / Reset / Create wiring */
+
+// Apply button (id="applyBtn")
+(function wireApplyButton(){
+  const btn = qs('applyBtn') || document.querySelector('[data-action="applyFilter"]');
+  if (!btn) {
+    console.warn('applyBtn not found — ensure button id="applyBtn" or data-action="applyFilter" exists');
+    return;
+  }
+  btn.addEventListener('click', async function(e){
+    e.preventDefault();
+    const userid = (qs('loginInput') && qs('loginInput').value) ? qs('loginInput').value.trim() : '';
+    if (!userid) return alert('Please login first');
+    const filt = getFilterFromUI();
+    await fetchTable(filt, userid);
+  });
+})();
+
+// Reset filters button (id="resetBtn")
+(function wireResetButton(){
+  const btn = qs('resetBtn') || document.querySelector('[data-action="resetFilters"]');
+  if (!btn) return;
+  btn.addEventListener('click', function(e){
+    e.preventDefault();
+    // reset known controls
+    ['engineer','gp','work','status','year','category','searchInput'].forEach(id=>{
+      const el = qs(id);
+      if (el) {
+        if (el.tagName === 'SELECT') el.selectedIndex = 0;
+        else el.value = '';
+      }
+    });
+    // re-run with empty filter if logged in
+    const userid = (qs('loginInput') && qs('loginInput').value) ? qs('loginInput').value.trim() : '';
+    if (userid) fetchTable({}, userid);
+  });
+})();
+
+// Create User open (id="createUserBtn" or id="tabCreate" fallback)
+function openCreateUserPage(){
+  const tabBtn = qs('tabCreate') || qs('createUserBtn') || document.querySelector('[data-tab="create"]');
+  if (tabBtn) {
+    try { tabBtn.click(); return; } catch(e){ /* continue */ }
+  }
+
+  const panel = qs('createUserPanel') || document.querySelector('.create-user-panel');
+  if (panel) {
+    panel.style.display = 'block';
+    if (panel.scrollIntoView) panel.scrollIntoView({behavior:'smooth'});
+    return;
+  }
+
+  if (typeof showCreateUser === 'function') { showCreateUser(); return; }
+
+  console.warn('Create User control not found. Add id="tabCreate" or id="createUserPanel" in HTML.');
+}
+(function wireCreateButton(){
+  const createBtn = qs('createUserBtn') || qs('tabCreate') || document.querySelector('[data-action="createUser"]');
+  if (!createBtn) { console.warn('createUserBtn not found'); return; }
+  createBtn.addEventListener('click', function(e){ e.preventDefault(); openCreateUserPage(); });
+})();
+
+/* init (patched) */
 async function init(){
   if (!window.APPSCRIPT_URL || window.APPSCRIPT_URL.trim() === '') { dbg('debugDash','Set window.APPSCRIPT_URL'); return; }
   try {
@@ -405,14 +575,23 @@ async function init(){
     if (dd && dd.ok && dd.data) {
       const dt = dd.data;
       if (qs('lastUpdate')) qs('lastUpdate').innerText = 'Last Update: ' + (dt.updateTime || '');
+
       populate('year', dt.years || []);
       populate('work', dt.works || []);
       populate('status', dt.status || []);
-      populate('category', dt.categories || []);
+
+      // sanitize categories before populating
+      window._lastDropdownCategories = dt.categories || [];
+      const cleanedCats = cleanCategoryList(dt.categories || []);
+      populate('category', cleanedCats);
+
       populate('engineer', dt.engineers || []);
       window._gpsByEngineer = dt.gpsByEngineer || {};
-      dbg('debugDash',{dropdowns:dt});
-    } else dbg('debugDash',{error:dd});
+
+      dbg('debugDash',{ dropdowns: dt, rawCategories: window._lastDropdownCategories, cleanedCategories: cleanedCats });
+    } else {
+      dbg('debugDash',{error:dd});
+    }
   } catch(err){ dbg('debugDash',{error:String(err)}); }
 
   // if user already set in loginInput, try to fetch table
