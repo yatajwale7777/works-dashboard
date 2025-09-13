@@ -1,6 +1,8 @@
 // ====== Configuration: set your Apps Script URL here ======
-window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbyricoKtthZHv_add4dyJAm0DhuTEumurnId3yoCJhwhk65aoIjKvYIrqkrHf3z3pqQjw/exec";
+window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbxL2IXyStgCaMbDYef4d6OqmTw7-FuKhmDESKbsVovpBv6dNHa3RplxAqGE3r5nW-ltGw/exec";
 // ============================================================
+
+
 
 /* helpers */
 function qs(id){ return document.getElementById(id); }
@@ -8,35 +10,105 @@ function dbg(id,obj){ try{ qs(id).textContent = typeof obj === 'string' ? obj : 
 function escapeHtml(s){ return (''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function toNum(v){ if (v===null||v===undefined) return NaN; const s=(''+v).replace(/,/g,'').trim(); if(s==='') return NaN; const n=Number(s); return isNaN(n)?NaN:n; }
 function fmt(n){ if (n===''||n===null||n===undefined) return ''; if (isNaN(n)) return ''; if (Math.abs(n)>=1000) return Number(n).toLocaleString(); if (Math.abs(n - Math.round(n))>0 && Math.abs(n) < 1) return Number(n).toFixed(4); if (Math.abs(n - Math.round(n))>0) return Number(n).toFixed(4); return String(Math.round(n)); }
-
-/* decode helper for data-payload */
 function decodeHtml(s){ if (s === null || s === undefined) return s; return s.replace(/&quot;/g,'"').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#39;/g,"'"); }
 
-/* safe fetch helper */
+/* safeFetchJson: parse response text to JSON; return info on non-json */
 async function safeFetchJson(response){
   const txt = await response.text();
   try { return JSON.parse(txt); }
   catch(e){ return { ok:false, error:'non-json-response', status: response.status, statusText: response.statusText, raw: txt }; }
 }
 
-/* network (GET/POST) - resilient to HTML/404 responses */
-async function callApi(action, method='GET', payload=null){
+/* JSONP helper: returns Promise that resolves with parsed result */
+function jsonpFetch(url, timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    const callbackName = '__jsonp_cb_' + Math.random().toString(36).slice(2);
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('JSONP timeout'));
+    }, timeoutMs);
+
+    function cleanup() {
+      clearTimeout(timer);
+      delete window[callbackName];
+      const el = document.getElementById(callbackName);
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    }
+
+    window[callbackName] = function(data){
+      cleanup();
+      resolve(data);
+    };
+
+    const s = document.createElement('script');
+    s.src = url + (url.indexOf('?') === -1 ? '?' : '&') + 'callback=' + callbackName;
+    s.id = callbackName;
+    s.onerror = function(e){
+      cleanup();
+      reject(new Error('JSONP script error'));
+    };
+    document.body.appendChild(s);
+  });
+}
+
+/* callApi: first try fetch (CORS). If GET fails due to CORS, fallback to JSONP for GET requests.
+   NOTE: JSONP fallback only works for GET actions supported by backend.doGet and JSONP (callback) */
+async function callApi(action, method = 'GET', payload = null) {
   if (!window.APPSCRIPT_URL) return Promise.reject(new Error('APPSCRIPT_URL not set'));
-  if (method === 'GET') {
+
+  // Helper to build GET URL with params
+  function buildGetUrl(actionName, paramsObj) {
     const u = new URL(window.APPSCRIPT_URL);
-    u.searchParams.set('action', action);
-    if (payload && typeof payload === 'object') Object.keys(payload).forEach(k=>u.searchParams.set(k, typeof payload[k]==='string'? payload[k]: JSON.stringify(payload[k])));
-    const resp = await fetch(u.toString(), { method:'GET', mode:'cors' });
-    return safeFetchJson(resp);
+    u.searchParams.set('action', actionName);
+    if (paramsObj && typeof paramsObj === 'object') {
+      Object.keys(paramsObj).forEach(k => {
+        const v = paramsObj[k];
+        if (v === null || v === undefined) return;
+        // if object => stringify
+        u.searchParams.set(k, typeof v === 'object' ? JSON.stringify(v) : String(v));
+      });
+    }
+    return u.toString();
+  }
+
+  // Try fetch
+  if (method === 'GET') {
+    const url = buildGetUrl(action, payload);
+    try {
+      const resp = await fetch(url, { method: 'GET', mode: 'cors' });
+      // if response is ok, parse
+      if (resp.ok) return await safeFetchJson(resp);
+      // if not ok (404/500) still try to parse body (safeFetchJson will handle)
+      return await safeFetchJson(resp);
+    } catch (fetchErr) {
+      // Possibly blocked by CORS — attempt JSONP fallback
+      try {
+        const jsonpUrl = buildGetUrl(action, payload);
+        const data = await jsonpFetch(jsonpUrl, 12000);
+        return data;
+      } catch (jsonpErr) {
+        return { ok:false, error: 'fetch-and-jsonp-failed', fetchError: String(fetchErr), jsonpError: String(jsonpErr) };
+      }
+    }
   } else {
-    const params = new URLSearchParams(); params.set('action', action);
-    if (payload && typeof payload === 'object') Object.keys(payload).forEach(k=>{ const v = payload[k]; params.set(k, typeof v === 'object' ? JSON.stringify(v) : String(v)); });
-    const resp = await fetch(window.APPSCRIPT_URL, { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8' }, body: params.toString(), mode:'cors' });
-    return safeFetchJson(resp);
+    // POST path: send x-www-form-urlencoded (backend expects that). POST cannot be JSONP.
+    try {
+      const params = new URLSearchParams(); params.set('action', action);
+      if (payload && typeof payload === 'object') {
+        Object.keys(payload).forEach(k => {
+          const v = payload[k];
+          params.set(k, typeof v === 'object' ? JSON.stringify(v) : String(v));
+        });
+      }
+      const resp = await fetch(window.APPSCRIPT_URL, { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8' }, body: params.toString(), mode:'cors' });
+      return await safeFetchJson(resp);
+    } catch(err) {
+      return { ok:false, error:'post-failed', message: String(err) };
+    }
   }
 }
 
-/* computeSectionsFromRaw - small helper if needed elsewhere */
+/* computeSectionsFromRaw */
 function computeSectionsFromRaw(rawArr){
   const raw = i => (Array.isArray(rawArr) ? (rawArr[i-1] === undefined ? '' : rawArr[i-1]) : '');
   function toNumLocal(v){ if (v === null || v === undefined) return NaN; const s = (''+v).replace(/,/g,'').trim(); if (s==='') return NaN; const n = Number(s); return isNaN(n)?NaN:n; }
@@ -45,12 +117,11 @@ function computeSectionsFromRaw(rawArr){
   return { planned: planned, exp: exp, swapped: false };
 }
 
-/* ---------- RENDER TABLE (fixed mapping to sheet columns) ---------- */
+/* ---------- RENDER TABLE (unchanged mapping) ---------- */
 function renderTable(rows){
   const out = qs('output'); if (!out) return;
   out.innerHTML = '';
 
-  // normalize rows input to array
   if (!rows) rows = [];
   if (!Array.isArray(rows)) {
     try { rows = Object.values(rows); } catch(e){ rows = []; }
@@ -69,50 +140,41 @@ function renderTable(rows){
   headers.forEach((h)=> html += '<th>' + escapeHtml(h) + '</th>');
   html += '</tr></thead><tbody>';
 
-  // helper preserving zeros
   const toNumLocal = v => { if (v === null || v === undefined) return NaN; const s = (''+v).replace(/,/g,'').trim(); if (s === '') return NaN; const n = Number(s); return isNaN(n)?NaN:n; };
 
   rows.forEach((r, ridx)=>{
-    // row -> array
     let arr = Array.isArray(r) ? r.slice() : (r && typeof r === 'object' ? Object.values(r) : [r]);
     arr = arr.map(x => x===null||x===undefined? '' : (''+x).trim());
 
-    // Build map using exact sheet columns (1-based -> arr index N-1)
     const map = {};
-    map['Engineer'] = arr[1] !== undefined ? arr[1] : '';             // col2 (Name of Sub Engg)
-    map['Gram Panchayat'] = arr[2] !== undefined ? arr[2] : '';       // col3
-    map['Type of work'] = arr[3] !== undefined ? arr[3] : '';         // col4
-    map['Name of work'] = arr[4] !== undefined ? arr[4] : '';         // col5
-    map['Year of Work'] = arr[5] !== undefined ? arr[5] : '';         // col6
-    map['Status'] = arr[6] !== undefined ? arr[6] : '';               // col7
+    map['Engineer'] = arr[1] !== undefined ? arr[1] : '';
+    map['Gram Panchayat'] = arr[2] !== undefined ? arr[2] : '';
+    map['Type of work'] = arr[3] !== undefined ? arr[3] : '';
+    map['Name of work'] = arr[4] !== undefined ? arr[4] : '';
+    map['Year of Work'] = arr[5] !== undefined ? arr[5] : '';
+    map['Status'] = arr[6] !== undefined ? arr[6] : '';
 
-    // Planned (cols 8..13) -> arr[7]..arr[12]
     map['Unskilled'] = toNumLocal(arr[7]);
     map['Semi-skilled'] = toNumLocal(arr[8]);
     map['Skilled'] = toNumLocal(arr[9]);
     map['Material'] = toNumLocal(arr[10]);
     map['Contingency'] = toNumLocal(arr[11]);
-    // Use sheet-provided Total Cost in col13 if present
     const sheetTotalCost = toNumLocal(arr[12]);
     map['Total Cost'] = !isNaN(sheetTotalCost) ? sheetTotalCost : NaN;
 
-    // Expenditure (cols 14..19) -> arr[13]..arr[18]
     map['Unskilled Exp'] = toNumLocal(arr[13]);
     map['Semi-skilled Exp'] = toNumLocal(arr[14]);
     map['Skilled Exp'] = toNumLocal(arr[15]);
     map['Material Exp'] = toNumLocal(arr[16]);
     map['Contingency Exp'] = toNumLocal(arr[17]);
-    // Use sheet-provided Total Exp in col19 if present
     const sheetTotalExp = toNumLocal(arr[18]);
     map['Total Exp'] = !isNaN(sheetTotalExp) ? sheetTotalExp : NaN;
 
-    // Category / Balance Mandays / % expenditure / Remark (cols 20..23)
     map['Category'] = arr[19] !== undefined ? arr[19] : '';
     map['Balance Mandays'] = arr[20] !== undefined ? arr[20] : '';
     map['% expenditure'] = arr[21] !== undefined ? arr[21] : '';
     map['Remark'] = arr[22] !== undefined ? arr[22] : '';
 
-    // If sheet didn't provide Total Cost or Total Exp, fallback to computed sums from components
     try {
       if (isNaN(map['Total Cost'])) {
         const totalPl = [map['Unskilled'],map['Semi-skilled'],map['Skilled'],map['Material'],map['Contingency']].reduce((a,b)=> a + (isNaN(b)?0:b), 0);
@@ -122,9 +184,8 @@ function renderTable(rows){
         const totalEx = [map['Unskilled Exp'],map['Semi-skilled Exp'],map['Skilled Exp'],map['Material Exp'],map['Contingency Exp']].reduce((a,b)=> a + (isNaN(b)?0:b), 0);
         if (!isNaN(totalEx) && totalEx !== 0) map['Total Exp'] = totalEx;
       }
-    } catch(e){ /* noop */ }
+    } catch(e){}
 
-    // compute balances planned - exp (preserve numeric/blank rules)
     function comp(pl, ex){
       const p = toNumLocal(pl), e = toNumLocal(ex);
       if (isNaN(p) && isNaN(e)) return '';
@@ -139,27 +200,21 @@ function renderTable(rows){
     map['Contingency Balance'] = comp(map['Contingency'], map['Contingency Exp']);
     map['Total Balance'] = comp(map['Total Cost'], map['Total Exp']);
 
-    // keep raw for modal
     map._raw = arr.slice();
 
-    // Prepare display values (preserve zero)
     const disp = headers.slice(1).map(h => {
       let rawv = (map.hasOwnProperty(h) ? map[h] : '');
       if (rawv === null || rawv === undefined) rawv = '';
-
       if (h === 'Engineer') {
         let v = (''+rawv).replace(/^\s*\d+\s*[\.\-\)\:]*\s*/,'').trim();
         return v;
       }
-
       if (h === 'Balance Mandays') {
         const n = Number((''+rawv).replace(/,/g,''));
         if (!isNaN(n)) return String(Math.round(n));
         return (rawv===''? '': ''+rawv);
       }
-
       if (h === '% expenditure') {
-        // prefer sheet value (may be '1%' or '0.01' or '0.01%')
         let rv = ('' + (rawv || '')).toString().trim();
         if (rv === '') return '';
         if (rv.indexOf('%') !== -1) return rv;
@@ -168,7 +223,6 @@ function renderTable(rows){
         if (Math.abs(pnum) <= 1) pnum = pnum * 100;
         return Math.round(pnum) + '%';
       }
-
       if (rawv === '') return '';
       return (''+rawv).trim();
     });
@@ -187,7 +241,6 @@ function renderTable(rows){
   dbg('debugDash','Rendered ' + rows.length + ' rows (sheet-mapped).');
 }
 
-/* row click -> modal */
 function installRowClickHandlers(){
   const table = qs('dataTable');
   if (!table) return;
@@ -203,7 +256,7 @@ function installRowClickHandlers(){
   });
 }
 
-/* Modal: show Particular / Section / Expenditure / Balance using mapped columns */
+/* modal code unchanged (kept as in your file) */
 const modalOverlay = qs('modalOverlay'), modalTitle = qs('modalTitle'), modalMeta = qs('modalMeta'), modalBody = qs('modalBody');
 let currentModalData = null;
 
@@ -221,7 +274,6 @@ function showModalDetail(map){
   if (modalTitle) modalTitle.textContent = name || 'Work Details';
   if (modalMeta) modalMeta.textContent = gp + (type? ('  |  ' + type):'') + (year? ('  |  ' + year):'') + (status? ('  |  ' + status):'');
 
-  // Planned and Exp arrays (explicit mapping)
   const plannedArr = [
     toNum(map['Unskilled']),
     toNum(map['Semi-skilled']),
@@ -258,9 +310,8 @@ function showModalDetail(map){
     html += '<div class="cell num">' + (bal === ''? '': fmt(bal)) + '</div>';
   }
 
-  html += '</div>'; // end grid
+  html += '</div>';
 
-  // display % exp (prefer sheet value, else compute from totals)
   let pctDisplay = '';
   try {
     if (pctRaw !== '' && pctRaw !== null && pctRaw !== undefined) {
@@ -271,7 +322,6 @@ function showModalDetail(map){
         pctDisplay = Math.round(num) + '%';
       } else pctDisplay = s;
     } else {
-      // fallback: compute from totals if available in arrays
       const totalPlanned = plannedArr.reduce? plannedArr.reduce((a,b)=> a + (isNaN(b)?0:b),0) : NaN;
       const totalExp = expArr.reduce? expArr.reduce((a,b)=> a + (isNaN(b)?0:b),0) : NaN;
       if (!isNaN(totalPlanned) && totalPlanned !== 0 && !isNaN(totalExp)) {
@@ -280,7 +330,6 @@ function showModalDetail(map){
     }
   } catch(e){ pctDisplay = ''; }
 
-  // balance mandays as integer
   let balMandaysDisplay = '';
   try {
     const bm = Number(('' + (balanceMandaysRaw || '')).replace(/,/g,''));
@@ -296,13 +345,12 @@ function showModalDetail(map){
   openModal();
 }
 
-
 function openModal(){ if(modalOverlay){ modalOverlay.style.display = 'flex'; document.body.style.overflow='hidden'; modalOverlay.setAttribute('aria-hidden','false'); } }
 function closeModal(){ if(modalOverlay){ modalOverlay.style.display = 'none'; document.body.style.overflow='auto'; modalOverlay.setAttribute('aria-hidden','true'); if(qs('modalBody')) qs('modalBody').innerHTML = ''; } }
 if (qs('modalClose')) qs('modalClose').addEventListener('click', closeModal);
 if (modalOverlay) modalOverlay.addEventListener('click', function(e){ if (e.target === modalOverlay) closeModal(); });
 
-/* modal export */
+/* modal export / table export (unchanged) */
 if (qs('modalExport')) qs('modalExport').addEventListener('click', function(){
   const map = currentModalData; if (!map) return alert('No data');
   const planned = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'].map(k=> toNum(map[k]));
@@ -332,7 +380,6 @@ if (qs('modalExport')) qs('modalExport').addEventListener('click', function(){
   const a = document.createElement('a'); a.href = url; a.download = ((map['Name of work']||'work').toString().replace(/[^\w\-]/g,'_').slice(0,60)) + '_details.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 });
 
-/* export main table */
 if (qs('exportBtn')) qs('exportBtn').addEventListener('click', ()=> {
   const table = qs('dataTable'); if (!table) return alert('No table to export');
   const rows = Array.from(table.querySelectorAll('thead tr, tbody tr'));
@@ -350,7 +397,7 @@ if (qs('exportBtn')) qs('exportBtn').addEventListener('click', ()=> {
   const a = document.createElement('a'); a.href = url; a.download = 'works_dashboard.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 });
 
-/* safer populate (replace existing populate) */
+/* safer populate and helpers */
 function populate(id, arr){
   const sel = qs(id);
   if(!sel) return;
@@ -367,7 +414,6 @@ function populate(id, arr){
   });
   try { if (cur) sel.value = cur; } catch(e){}
 }
-/* clean category list: removes blanks, 'total', pure-numeric junk, duplicates */
 function cleanCategoryList(arr){
   if (!Array.isArray(arr)) return [];
   const seen = new Set();
@@ -378,19 +424,15 @@ function cleanCategoryList(arr){
     if (s === '') continue;
     const low = s.toLowerCase();
     if (low === 'total' || low === 'na' || low === 'n/a') continue;
-    // remove pure-numeric lines like "11.234" or "1,234"
     if (/^[\d\.\-\,\s]+$/.test(s)) continue;
-    // normalize spaces
     s = s.replace(/\s+/g,' ').trim();
     if (seen.has(s)) continue;
     seen.add(s);
     out.push(s);
   }
-  // optional: sort alphabetically — remove .sort() if you want original order preserved
   out.sort();
   return out;
 }
-/* helper: ensure filter keys exist and are strings (trimmed) */
 function sanitizeFilter(input){
   const keys = ['engineer','gp','work','status','year','search'];
   const out = {};
@@ -405,21 +447,19 @@ function sanitizeFilter(input){
   return out;
 }
 
-/* fetch table (sanitized) - REPLACE your old fetchTable with this */
+/* fetchTable -> using GET so JSONP fallback is possible */
 async function fetchTable(filter, userid){
   try {
     if (!userid) { alert('Please login first'); return; }
 
-    // sanitize filter before sending
     const filt = sanitizeFilter(filter || {});
     dbg('debugDash',{ sendingFilter: filt, userid: userid });
 
-    // call API - keep same callApi signature (it posts x-www-form-urlencoded)
-    const res = await callApi('getFilteredData','POST',{ filter: filt, userid: userid });
+    // Use GET so JSONP fallback can work if CORS blocks
+    const res = await callApi('getFilteredData','GET',{ filter: filt, userid: userid });
 
     dbg('debugDash',{filteredRes:res});
     let rows = [];
-    // handle different shapes returned by backend
     if (res && res.ok && res.rows) rows = res.rows;
     else if (Array.isArray(res)) rows = res;
     else if (res && res.rows) rows = res.rows;
@@ -429,14 +469,15 @@ async function fetchTable(filter, userid){
   } catch(err){ dbg('debugDash',{fetchTableError:String(err)}); }
 }
 
-
-/* Login / Logout (simple) */
+/* Login / Logout: use GET for validateUserCredential so JSONP can fallback if needed.
+   NOTE: backend must implement doGet action 'validateUserCredential' returning same shape as doPost. */
 if (qs('loginBtn')) qs('loginBtn').addEventListener('click', ()=>{ const v = qs('loginInput').value.trim(); if (!v) return alert('Enter UserID or Name'); doLogin(v); });
 if (qs('logoutBtn')) qs('logoutBtn').addEventListener('click', ()=>{ if(qs('loginInput')) qs('loginInput').value=''; if(qs('userInfo')) qs('userInfo').innerText=''; if(qs('filtersCard')) qs('filtersCard').style.display='none'; if(qs('output')) qs('output').innerHTML=''; if(qs('logoutBtn')) qs('logoutBtn').style.display='none'; });
 
 async function doLogin(val){
   try {
-    const res = await callApi('validateUserCredential','POST',{ input: val });
+    // Use GET so JSONP fallback works if CORS blocks
+    const res = await callApi('validateUserCredential','GET',{ input: val });
     dbg('debugDash',{validate:res});
     if (!res) { alert('Invalid user or backend error'); return; }
     let u = (res.user || res);
@@ -472,8 +513,7 @@ async function init(){
       populate('work', dt.works || []);
       populate('status', dt.status || []);
 
-      // --- sanitize categories before populating ---
-      window._lastDropdownCategories = dt.categories || [];    // for debug inspection
+      window._lastDropdownCategories = dt.categories || [];
       const cleanedCats = cleanCategoryList(dt.categories || []);
       populate('category', cleanedCats);
 
@@ -484,7 +524,6 @@ async function init(){
     } else dbg('debugDash',{error:dd});
   } catch(err){ dbg('debugDash',{error:String(err)}); }
 
-  // if user already set in loginInput, try to fetch table
   const userid = qs('loginInput')?qs('loginInput').value.trim():'';
   if (userid) {
     try { await fetchTable({}, userid); } catch(e){ dbg('debugDash',{error:String(e)}); }
