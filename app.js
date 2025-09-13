@@ -1,6 +1,6 @@
 // ====== Configuration: set your Apps Script URL here ======
 window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbxAo8oSHyqP7Roj_LDmrbFtOhoi47a0Zhz6M7IRlHJrl1kiTsKNuTx5ptAZv7OYceODAA/exec";
-// ============================================================
+// ===========================================================
 
 /* helpers */
 function qs(id){return document.getElementById(id)}
@@ -461,4 +461,75 @@ if (tabDashboard) tabDashboard.addEventListener('click', ()=>{ tabDashboard.clas
 if (tabCreate) tabCreate.addEventListener('click', ()=>{ tabCreate.classList.add('active'); if(tabDashboard) tabDashboard.classList.remove('active'); if(qs('panelCreate')) qs('panelCreate').style.display='block'; if(qs('panelDashboard')) qs('panelDashboard').style.display='none'; if (!window._createLoaded) { loadOptionsCreate(); window._createLoaded = true; } });
 
 /* init */
+async function init(){
+  if (!window.APPSCRIPT_URL || window.APPSCRIPT_URL.trim() === '') { dbg('debugDash','Set window.APPSCRIPT_URL'); return; }
+  try {
+    const dd = await callApi('getDropdownData','GET');
+    if (dd && dd.ok && dd.data) {
+      const dt = dd.data;
+      if (qs('lastUpdate')) qs('lastUpdate').innerText = 'Last Update: ' + (dt.updateTime || '');
+      populate('year', dt.years || []);
+      populate('work', dt.works || []);
+      populate('status', dt.status || []);
+      populate('category', dt.categories || []);
+      populate('engineer', dt.engineers || []);
+      window._gpsByEngineer = dt.gpsByEngineer || {};
+      dbg('debugDash',{dropdowns:dt});
+    } else dbg('debugDash',{error:dd});
+  } catch(err){ dbg('debugDash',{error:String(err)}); }
+
+  // if user already set in loginInput, try to fetch table
+  const userid = qs('loginInput')?qs('loginInput').value.trim():'';
+  if (userid) {
+    try { await fetchTable({}, userid); } catch(e){ dbg('debugDash',{error:String(e)}); }
+  }
+}
+
+/* populate dropdown helper (used in init) */
+function populate(id, arr){ const sel = qs(id); if(!sel) return; const cur = sel.value; sel.innerHTML = '<option value="">--All--</option>'; (arr||[]).forEach(v=>{ const o=document.createElement('option'); o.value=v; o.textContent=v; sel.appendChild(o); }); if (cur) sel.value = cur; }
+
+/* fetch table */
+async function fetchTable(filter, userid){
+  try {
+    if (!userid) { alert('Please login first'); return; }
+    const res = await callApi('getFilteredData','POST',{ filter: filter, userid: userid });
+    dbg('debugDash',{filteredRes:res});
+    let rows = [];
+    if (res && res.ok && res.rows) rows = res.rows;
+    else if (Array.isArray(res)) rows = res;
+    else if (res && res.rows) rows = res.rows;
+    renderTable(rows);
+  } catch(err){ dbg('debugDash',{fetchTableError:String(err)}); }
+}
+
+/* Login / Logout (simple) */
+if (qs('loginBtn')) qs('loginBtn').addEventListener('click', ()=>{ const v = qs('loginInput').value.trim(); if (!v) return alert('Enter UserID or Name'); doLogin(v); });
+if (qs('logoutBtn')) qs('logoutBtn').addEventListener('click', ()=>{ if(qs('loginInput')) qs('loginInput').value=''; if(qs('userInfo')) qs('userInfo').innerText=''; if(qs('filtersCard')) qs('filtersCard').style.display='none'; if(qs('output')) qs('output').innerHTML=''; if(qs('logoutBtn')) qs('logoutBtn').style.display='none'; });
+
+async function doLogin(val){
+  try {
+    const res = await callApi('validateUserCredential','POST',{ input: val });
+    dbg('debugDash',{validate:res});
+    if (!res) { alert('Invalid user or backend error'); return; }
+    let u = (res.user || res);
+    if (res.ok && res.user) u = res.user;
+    if (!u || !u.valid) { alert('Invalid UserID/Name'); return; }
+    if (qs('userInfo')) qs('userInfo').innerText = 'Logged in: ' + u.name + ' (' + u.userid + ')';
+    if (qs('logoutBtn')) qs('logoutBtn').style.display = 'inline-block';
+    const gp = qs('gp'); if (gp) { gp.innerHTML = '<option value="">--All--</option>'; (u.panchayats||[]).forEach(p=>{ const o=document.createElement('option'); o.value=p; o.textContent=p; gp.appendChild(o); }); }
+    if (window._gpsByEngineer) {
+      const gpsByEngineer = window._gpsByEngineer;
+      const engines = Object.keys(gpsByEngineer).filter(e=>{
+        const arr = (gpsByEngineer[e]||[]).map(x=>(''+x).trim().toLowerCase());
+        return (u.panchayats||[]).some(up => arr.indexOf((''+up).trim().toLowerCase()) !== -1);
+      });
+      populate('engineer', engines);
+      window._engineers = engines.map(x=>(''+x).trim());
+    }
+    if (qs('filtersCard')) qs('filtersCard').style.display = 'block';
+    await fetchTable({}, u.userid);
+  } catch(err){ dbg('debugDash',{loginError:String(err)}); alert('Login error: '+String(err)); }
+}
+
+/* init run */
 (async function(){ await init(); })();
