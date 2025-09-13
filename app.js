@@ -350,9 +350,46 @@ if (qs('exportBtn')) qs('exportBtn').addEventListener('click', ()=> {
   const a = document.createElement('a'); a.href = url; a.download = 'works_dashboard.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 });
 
-/* populate helper */
-function populate(id, arr){ const sel = qs(id); if(!sel) return; const cur = sel.value; sel.innerHTML = '<option value="">--All--</option>'; (arr||[]).forEach(v=>{ const o=document.createElement('option'); o.value=v; o.textContent=v; sel.appendChild(o); }); if (cur) sel.value = cur; }
-
+/* safer populate (replace existing populate) */
+function populate(id, arr){
+  const sel = qs(id);
+  if(!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">--All--</option>';
+  (arr||[]).forEach(v=>{
+    if (v === null || v === undefined) return;
+    const sv = (''+v).trim();
+    if (sv === '') return;
+    const o = document.createElement('option');
+    o.value = sv;
+    o.textContent = sv;
+    sel.appendChild(o);
+  });
+  try { if (cur) sel.value = cur; } catch(e){}
+}
+/* clean category list: removes blanks, 'total', pure-numeric junk, duplicates */
+function cleanCategoryList(arr){
+  if (!Array.isArray(arr)) return [];
+  const seen = new Set();
+  const out = [];
+  for (let x of arr) {
+    if (x === null || x === undefined) continue;
+    let s = ('' + x).trim();
+    if (s === '') continue;
+    const low = s.toLowerCase();
+    if (low === 'total' || low === 'na' || low === 'n/a') continue;
+    // remove pure-numeric lines like "11.234" or "1,234"
+    if (/^[\d\.\-\,\s]+$/.test(s)) continue;
+    // normalize spaces
+    s = s.replace(/\s+/g,' ').trim();
+    if (seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  // optional: sort alphabetically — remove .sort() if you want original order preserved
+  out.sort();
+  return out;
+}
 /* fetch table */
 async function fetchTable(filter, userid){
   try {
@@ -396,7 +433,7 @@ async function doLogin(val){
   } catch(err){ dbg('debugDash',{loginError:String(err)}); alert('Login error: '+String(err)); }
 }
 
-/* init */
+/* init (patched) */
 async function init(){
   if (!window.APPSCRIPT_URL || window.APPSCRIPT_URL.trim() === '') { dbg('debugDash','Set window.APPSCRIPT_URL'); return; }
   try {
@@ -404,13 +441,20 @@ async function init(){
     if (dd && dd.ok && dd.data) {
       const dt = dd.data;
       if (qs('lastUpdate')) qs('lastUpdate').innerText = 'Last Update: ' + (dt.updateTime || '');
+
       populate('year', dt.years || []);
       populate('work', dt.works || []);
       populate('status', dt.status || []);
-      populate('category', dt.categories || []);
+
+      // --- sanitize categories before populating ---
+      window._lastDropdownCategories = dt.categories || [];    // for debug inspection
+      const cleanedCats = cleanCategoryList(dt.categories || []);
+      populate('category', cleanedCats);
+
       populate('engineer', dt.engineers || []);
       window._gpsByEngineer = dt.gpsByEngineer || {};
-      dbg('debugDash',{dropdowns:dt});
+
+      dbg('debugDash',{ dropdowns: dt, rawCategories: window._lastDropdownCategories, cleanedCategories: cleanedCats });
     } else dbg('debugDash',{error:dd});
   } catch(err){ dbg('debugDash',{error:String(err)}); }
 
