@@ -25,11 +25,10 @@ function jsonpFetch(url, cbParam='callback', timeoutMs=8000){
     window[cbName] = function(data){ resolve(data); cleanup(); };
     const script = document.createElement('script');
     const sep = url.indexOf('?') === -1 ? '?' : '&';
-    // use cbParam as provided (backend must support it)
     script.src = url + sep + encodeURIComponent(cbParam) + '=' + cbName;
     script.onerror = function(){ reject(new Error('JSONP script load error')); cleanup(); };
     const to = setTimeout(()=>{ reject(new Error('JSONP timeout')); cleanup(); }, timeoutMs);
-    function cleanup(){ clearTimeout(to); try{ delete window[cbName]; }catch(e){} try{ script.remove(); }catch(e){} }
+    function cleanup(){ clearTimeout(to); try{ delete window[cbName]; }catch(e){} script.remove(); }
     document.head.appendChild(script);
   });
 }
@@ -87,14 +86,33 @@ function sanitizeFilter(input){
   return out;
 }
 
-/* ---------- RENDER TABLE (same as your code) ---------- */
-/* (renderTable, modal functions - copied from your implementation) */
+/* helper: unique + clean small utility used for categories */
+function uniqClean(arr){
+  const seen = new Set();
+  const out = [];
+  (arr||[]).forEach(x=>{
+    if (x === null || x === undefined) return;
+    let s = (''+x).trim();
+    if (!s) return;
+    const low = s.toLowerCase();
+    if (low === 'total' || low === 'na' || low === 'n/a' || low === 'nan') return;
+    if (/^[\d\.\-\,\s]+$/.test(s)) return;
+    if (s.length <= 1) return;
+    s = s.replace(/\s+/g,' ').trim();
+    if (seen.has(s)) return;
+    seen.add(s);
+    out.push(s);
+  });
+  out.sort();
+  return out;
+}
 
+/* ---------- RENDER TABLE (same as your original) ---------- */
+/* I copied your renderTable + modal code (unchanged) */
 function renderTable(rows){
   const out = qs('output'); if (!out) return;
   out.innerHTML = '';
 
-  // normalize rows input to array
   if (!rows) rows = [];
   if (!Array.isArray(rows)) {
     try { rows = Object.values(rows); } catch(e){ rows = []; }
@@ -113,50 +131,41 @@ function renderTable(rows){
   headers.forEach((h)=> html += '<th>' + escapeHtml(h) + '</th>');
   html += '</tr></thead><tbody>';
 
-  // helper preserving zeros
   const toNumLocal = v => { if (v === null || v === undefined) return NaN; const s = (''+v).replace(/,/g,'').trim(); if (s === '') return NaN; const n = Number(s); return isNaN(n)?NaN:n; };
 
   rows.forEach((r, ridx)=>{
-    // row -> array
     let arr = Array.isArray(r) ? r.slice() : (r && typeof r === 'object' ? Object.values(r) : [r]);
     arr = arr.map(x => x===null||x===undefined? '' : (''+x).trim());
 
-    // Build map using exact sheet columns (1-based -> arr index N-1)
     const map = {};
-    map['Engineer'] = arr[1] !== undefined ? arr[1] : '';             // col2 (Name of Sub Engg)
-    map['Gram Panchayat'] = arr[2] !== undefined ? arr[2] : '';       // col3
-    map['Type of work'] = arr[3] !== undefined ? arr[3] : '';         // col4
-    map['Name of work'] = arr[4] !== undefined ? arr[4] : '';         // col5
-    map['Year of Work'] = arr[5] !== undefined ? arr[5] : '';         // col6
-    map['Status'] = arr[6] !== undefined ? arr[6] : '';               // col7
+    map['Engineer'] = arr[1] !== undefined ? arr[1] : '';
+    map['Gram Panchayat'] = arr[2] !== undefined ? arr[2] : '';
+    map['Type of work'] = arr[3] !== undefined ? arr[3] : '';
+    map['Name of work'] = arr[4] !== undefined ? arr[4] : '';
+    map['Year of Work'] = arr[5] !== undefined ? arr[5] : '';
+    map['Status'] = arr[6] !== undefined ? arr[6] : '';
 
-    // Planned (cols 8..13) -> arr[7]..arr[12]
     map['Unskilled'] = toNumLocal(arr[7]);
     map['Semi-skilled'] = toNumLocal(arr[8]);
     map['Skilled'] = toNumLocal(arr[9]);
     map['Material'] = toNumLocal(arr[10]);
     map['Contingency'] = toNumLocal(arr[11]);
-    // Use sheet-provided Total Cost in col13 if present
     const sheetTotalCost = toNumLocal(arr[12]);
     map['Total Cost'] = !isNaN(sheetTotalCost) ? sheetTotalCost : NaN;
 
-    // Expenditure (cols 14..19) -> arr[13]..arr[18]
     map['Unskilled Exp'] = toNumLocal(arr[13]);
     map['Semi-skilled Exp'] = toNumLocal(arr[14]);
     map['Skilled Exp'] = toNumLocal(arr[15]);
     map['Material Exp'] = toNumLocal(arr[16]);
     map['Contingency Exp'] = toNumLocal(arr[17]);
-    // Use sheet-provided Total Exp in col19 if present
     const sheetTotalExp = toNumLocal(arr[18]);
     map['Total Exp'] = !isNaN(sheetTotalExp) ? sheetTotalExp : NaN;
 
-    // Category / Balance Mandays / % expenditure / Remark (cols 20..23)
     map['Category'] = arr[19] !== undefined ? arr[19] : '';
     map['Balance Mandays'] = arr[20] !== undefined ? arr[20] : '';
     map['% expenditure'] = arr[21] !== undefined ? arr[21] : '';
     map['Remark'] = arr[22] !== undefined ? arr[22] : '';
 
-    // If sheet didn't provide Total Cost or Total Exp, fallback to computed sums from components
     try {
       if (isNaN(map['Total Cost'])) {
         const totalPl = [map['Unskilled'],map['Semi-skilled'],map['Skilled'],map['Material'],map['Contingency']].reduce((a,b)=> a + (isNaN(b)?0:b), 0);
@@ -166,9 +175,8 @@ function renderTable(rows){
         const totalEx = [map['Unskilled Exp'],map['Semi-skilled Exp'],map['Skilled Exp'],map['Material Exp'],map['Contingency Exp']].reduce((a,b)=> a + (isNaN(b)?0:b), 0);
         if (!isNaN(totalEx) && totalEx !== 0) map['Total Exp'] = totalEx;
       }
-    } catch(e){ /* noop */ }
+    } catch(e){}
 
-    // compute balances planned - exp (preserve numeric/blank rules)
     function comp(pl, ex){
       const p = toNumLocal(pl), e = toNumLocal(ex);
       if (isNaN(p) && isNaN(e)) return '';
@@ -183,10 +191,8 @@ function renderTable(rows){
     map['Contingency Balance'] = comp(map['Contingency'], map['Contingency Exp']);
     map['Total Balance'] = comp(map['Total Cost'], map['Total Exp']);
 
-    // keep raw for modal
     map._raw = arr.slice();
 
-    // Prepare display values (preserve zero)
     const disp = headers.slice(1).map(h => {
       let rawv = (map.hasOwnProperty(h) ? map[h] : '');
       if (rawv === null || rawv === undefined) rawv = '';
@@ -203,7 +209,6 @@ function renderTable(rows){
       }
 
       if (h === '% expenditure') {
-        // prefer sheet value (may be '1%' or '0.01' or '0.01%')
         let rv = ('' + (rawv || '')).toString().trim();
         if (rv === '') return '';
         if (rv.indexOf('%') !== -1) return rv;
@@ -231,7 +236,6 @@ function renderTable(rows){
   dbg('debugDash','Rendered ' + rows.length + ' rows (sheet-mapped).');
 }
 
-/* row click -> modal */
 function installRowClickHandlers(){
   const table = qs('dataTable');
   if (!table) return;
@@ -247,7 +251,6 @@ function installRowClickHandlers(){
   });
 }
 
-/* Modal: show Particular / Section / Expenditure / Balance using mapped columns */
 const modalOverlay = qs('modalOverlay'), modalTitle = qs('modalTitle'), modalMeta = qs('modalMeta'), modalBody = qs('modalBody');
 let currentModalData = null;
 
@@ -265,7 +268,6 @@ function showModalDetail(map){
   if (modalTitle) modalTitle.textContent = name || 'Work Details';
   if (modalMeta) modalMeta.textContent = gp + (type? ('  |  ' + type):'') + (year? ('  |  ' + year):'') + (status? ('  |  ' + status):'');
 
-  // Planned and Exp arrays (explicit mapping)
   const plannedArr = [
     toNum(map['Unskilled']),
     toNum(map['Semi-skilled']),
@@ -302,9 +304,8 @@ function showModalDetail(map){
     html += '<div class="cell num">' + (bal === ''? '': fmt(bal)) + '</div>';
   }
 
-  html += '</div>'; // end grid
+  html += '</div>';
 
-  // display % exp (prefer sheet value, else compute from totals)
   let pctDisplay = '';
   try {
     if (pctRaw !== '' && pctRaw !== null && pctRaw !== undefined) {
@@ -315,7 +316,6 @@ function showModalDetail(map){
         pctDisplay = Math.round(num) + '%';
       } else pctDisplay = s;
     } else {
-      // fallback: compute from totals if available in arrays
       const totalPlanned = plannedArr.reduce? plannedArr.reduce((a,b)=> a + (isNaN(b)?0:b),0) : NaN;
       const totalExp = expArr.reduce? expArr.reduce((a,b)=> a + (isNaN(b)?0:b),0) : NaN;
       if (!isNaN(totalPlanned) && totalPlanned !== 0 && !isNaN(totalExp)) {
@@ -324,7 +324,6 @@ function showModalDetail(map){
     }
   } catch(e){ pctDisplay = ''; }
 
-  // balance mandays as integer
   let balMandaysDisplay = '';
   try {
     const bm = Number(('' + (balanceMandaysRaw || '')).replace(/,/g,'')); 
@@ -345,7 +344,6 @@ function closeModal(){ if(modalOverlay){ modalOverlay.style.display = 'none'; do
 if (qs('modalClose')) qs('modalClose').addEventListener('click', closeModal);
 if (modalOverlay) modalOverlay.addEventListener('click', function(e){ if (e.target === modalOverlay) closeModal(); });
 
-/* modal export */
 if (qs('modalExport')) qs('modalExport').addEventListener('click', function(){
   const map = currentModalData; if (!map) return alert('No data');
   const planned = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'].map(k=> toNum(map[k]));
@@ -375,7 +373,6 @@ if (qs('modalExport')) qs('modalExport').addEventListener('click', function(){
   const a = document.createElement('a'); a.href = url; a.download = ((map['Name of work']||'work').toString().replace(/[^\w\-]/g,'_').slice(0,60)) + '_details.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 });
 
-/* export main table */
 if (qs('exportBtn')) qs('exportBtn').addEventListener('click', ()=> {
   const table = qs('dataTable'); if (!table) return alert('No table to export');
   const rows = Array.from(table.querySelectorAll('thead tr, tbody tr'));
@@ -411,34 +408,6 @@ function populate(id, arr){
   try { if (cur) sel.value = cur; } catch(e){}
 }
 
-/* initDropdowns - separate from init to allow refresh after create user */
-async function initDropdowns(){
-  try {
-    const dd = await callApi('getDropdownData','GET');
-    if (dd && dd.ok && dd.data) {
-      const dt = dd.data;
-      if (qs('lastUpdate')) qs('lastUpdate').innerText = 'Last Update: ' + (dt.updateTime || '');
-      populate('year', dt.years || []);
-      populate('work', dt.works || []);
-      populate('status', dt.status || []);
-      // categories may need cleaning but backend should supply preferred column — we rely on backend
-      populate('category', dt.categories || []);
-      populate('engineer', dt.engineers || []);
-      // populate create-panel panchayats (multi-select)
-      const cPans = qs('c_panchayats');
-      if (cPans) {
-        cPans.innerHTML = '';
-        (dt.allPanchayats||[]).forEach(p=>{
-          if (!p) return;
-          const o = document.createElement('option'); o.value = p; o.textContent = p; cPans.appendChild(o);
-        });
-      }
-      window._gpsByEngineer = dt.gpsByEngineer || {};
-      dbg('debugDash',{dropdowns:dt});
-    } else dbg('debugDash',{error:dd});
-  } catch(err){ dbg('debugDash',{error:String(err)}); }
-}
-
 /* fetch table (sanitized) */
 async function fetchTable(filter, userid){
   try {
@@ -452,13 +421,10 @@ async function fetchTable(filter, userid){
     let rows = [];
     if (!res) rows = [];
     else if (Array.isArray(res)) rows = res;
-    else if (res.ok && res.rows && Array.isArray(res.rows)) rows = res.rows;
     else if (res.rows && Array.isArray(res.rows)) rows = res.rows;
     else if (res.result && Array.isArray(res.result)) rows = res.result;
     else if (res.data && res.data.rows && Array.isArray(res.data.rows)) rows = res.data.rows;
-    else if (res && res.ok && res.data && Array.isArray(res.data)) rows = res.data;
     else {
-      // if backend returned object that looks like normal array
       try {
         const maybe = Object.values(res).find(v => Array.isArray(v));
         if (Array.isArray(maybe)) rows = maybe;
@@ -498,14 +464,10 @@ async function doLogin(val){
   } catch(err){ dbg('debugDash',{loginError:String(err)}); alert('Login error: '+String(err)); }
 }
 
-/* UI controls wiring - robust version */
+/* UI controls wiring: apply / reset / create tab fallback / save user */
 function wireControls(){
-  // find apply control (support multiple possible ids)
+  // apply button (your HTML uses id="filterBtn")
   let apply = qs('filterBtn') || qs('applyBtn') || document.querySelector('[data-action="applyFilter"]');
-  if (!apply) {
-    // also try to find a button with text "Apply"
-    apply = Array.from(document.querySelectorAll('button')).find(b => (b.textContent||'').trim().toLowerCase().indexOf('apply') !== -1) || null;
-  }
   if (apply) {
     apply.addEventListener('click', ()=> {
       const filter = {
@@ -521,106 +483,169 @@ function wireControls(){
       fetchTable(filter, userid);
     });
   } else {
-    console.warn('apply control not found. Ensure id="filterBtn" or id="applyBtn" or data-action="applyFilter" exists');
+    console.warn('applyBtn not found — ensure button id="filterBtn" exists');
   }
 
-  // reset
+  // reset button
   let reset = qs('resetBtn') || document.querySelector('[data-action="resetFilters"]');
-  if (!reset) {
-    reset = Array.from(document.querySelectorAll('button')).find(b => (b.textContent||'').trim().toLowerCase().indexOf('reset') !== -1) || null;
-  }
   if (reset) {
-    reset.addEventListener('click', ()=> {
+    reset.addEventListener('click', ()=>{
       ['engineer','gp','work','status','year','category','search'].forEach(id=>{
         const el = qs(id);
         if (!el) return;
-        try { el.value = ''; } catch(e){}
+        if (el.tagName === 'SELECT' || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') el.value = '';
       });
       const userid = qs('loginInput')?qs('loginInput').value.trim():'';
       if (userid) fetchTable({}, userid);
     });
   } else {
-    console.warn('reset control not found. Ensure id="resetBtn" or data-action="resetFilters" exists');
+    console.warn('resetBtn not found — ensure button id="resetBtn" exists');
   }
 
-  // Tabs (works even if elements are missing)
-  const tabDashboard = qs('tabDashboard') || Array.from(document.querySelectorAll('.tab-btn')).find(b=> (b.textContent||'').toLowerCase().indexOf('dashboard')!==-1);
-  const tabCreate = qs('tabCreate') || Array.from(document.querySelectorAll('.tab-btn')).find(b=> (b.textContent||'').toLowerCase().indexOf('create')!==-1 || (b.textContent||'').toLowerCase().indexOf('user')!==-1);
-  const panelDashboard = qs('panelDashboard') || qs('panelDash') || document.getElementById('panelDashboard');
-  const panelCreate = qs('panelCreate') || document.getElementById('panelCreate');
+  // Create / tab wiring
+  const tabDash = qs('tabDashboard'), tabCreate = qs('tabCreate'), panelDash = qs('panelDashboard'), panelCreate = qs('panelCreate');
+  if (tabDash) tabDash.addEventListener('click', ()=>{ if (tabDash) tabDash.classList.add('active'); if (tabCreate) tabCreate.classList.remove('active'); if (panelDash) panelDash.style.display='block'; if (panelCreate) panelCreate.style.display='none'; });
+  if (tabCreate) tabCreate.addEventListener('click', ()=>{ if (tabCreate) tabCreate.classList.add('active'); if (tabDash) tabDash.classList.remove('active'); if (panelCreate) panelCreate.style.display='block'; if (panelDash) panelDash.style.display='none'; });
 
-  if (tabDashboard && tabCreate && panelDashboard && panelCreate) {
-    tabDashboard.addEventListener('click', ()=> {
-      tabDashboard.classList.add('active'); if(tabCreate) tabCreate.classList.remove('active');
-      panelDashboard.style.display = 'block'; panelCreate.style.display = 'none';
+  // also wire createBtn fallback if exists
+  let create = qs('createBtn') || document.querySelector('[data-action="openCreateUser"]');
+  if (create) {
+    create.addEventListener('click', ()=>{
+      const tab = qs('tabCreate');
+      if (tab) tab.click();
+      else {
+        const panel = qs('createUserPanel') || qs('panelCreate') || document.getElementById('createUser');
+        if (panel) panel.style.display = 'block';
+      }
     });
-    tabCreate.addEventListener('click', ()=> {
-      tabCreate.classList.add('active'); if(tabDashboard) tabDashboard.classList.remove('active');
-      panelCreate.style.display = 'block'; panelDashboard.style.display = 'none';
-      // focus first field on create panel (helpful on mobile)
-      try { const f = qs('c_name'); if (f) f.focus(); } catch(e){}
-    });
-  } else {
-    // fallback: if tab elements missing, try to wire any "create" button to show panelCreate
-    const createBtn = qs('createBtn') || document.querySelector('[data-action="openCreateUser"]') || Array.from(document.querySelectorAll('button')).find(b=> (b.textContent||'').toLowerCase().indexOf('create')!==-1);
-    if (createBtn && panelCreate && panelDashboard) {
-      createBtn.addEventListener('click', ()=> {
-        panelCreate.style.display = 'block'; panelDashboard.style.display = 'none';
-        try { const f = qs('c_name'); if (f) f.focus(); } catch(e){}
-      });
-    } else {
-      console.warn('Tab wiring incomplete - tab or panels not found. Check ids: tabDashboard, tabCreate, panelDashboard, panelCreate');
-    }
   }
 
-  // Save button handler (create/update user)
-  const saveBtn = qs('btnSave') || qs('saveUserBtn');
+  // Save button on Create panel
+  const saveBtn = qs('btnSave');
   if (saveBtn) {
-    saveBtn.addEventListener('click', async ()=> {
-      const name = qs('c_name')?qs('c_name').value.trim():'';
-      const post = qs('c_post')?qs('c_post').value.trim():'';
-      const dcode = qs('c_dcode')?qs('c_dcode').value.trim():'77';
-      const pansEl = qs('c_panchayats');
+    saveBtn.addEventListener('click', async ()=>{
+      const name = (qs('c_name')?qs('c_name').value.trim():'');
+      const post = (qs('c_post')?qs('c_post').value.trim():'');
+      const dcode = (qs('c_dcode')?qs('c_dcode').value.trim():'77');
       let panchayats = [];
-      if (pansEl) panchayats = Array.from(pansEl.selectedOptions).map(o=>o.value).filter(Boolean);
-      if (!name || !post || panchayats.length === 0) {
-        if (qs('statusCreate')) qs('statusCreate').innerText = 'Name, Post and at least one Panchayat required.';
+      const sel = qs('c_panchayats');
+      if (sel) {
+        Array.from(sel.selectedOptions||[]).forEach(o=>{ if (o && o.value) panchayats.push(o.value); });
+      }
+      dbg('debugCreate',{sending:{name:name,post:post,dcode:dcode,panchayats:panchayats}});
+      if (!name || !post || !panchayats.length) {
+        qs('statusCreate').innerText = 'Please fill Name, Post and select at least one Panchayat.';
         return;
       }
-      if (qs('statusCreate')) qs('statusCreate').innerText = 'Saving...';
+      qs('statusCreate').innerText = 'Saving...';
       try {
         const payload = { name: name, post: post, dcode: dcode, panchayats: panchayats };
-        const res = await callApi('appendOrUpdateUser','POST', payload);
-        dbg('debugCreate', {res:res});
-        // backend wrapper may return {ok:true, result: {...}} or raw result
-        const resultObj = (res && res.result) ? res.result : res;
-        if (resultObj && (resultObj.action || resultObj.userid || (res && res.ok))) {
-          if (qs('statusCreate')) qs('statusCreate').innerText = 'Saved successfully';
-          // refresh dropdowns and panchayats list
-          await initDropdowns();
+        const res = await callApi('appendOrUpdateUser','POST',{ payload: payload });
+        dbg('debugCreate',{result:res});
+        if (res && res.ok && res.result) {
+          qs('statusCreate').innerText = 'Saved: ' + JSON.stringify(res.result);
+          // refresh dropdowns in case new user added
+          await init(); 
+        } else if (res && res.result) {
+          qs('statusCreate').innerText = 'Saved: ' + JSON.stringify(res.result);
+          await init();
         } else {
-          if (qs('statusCreate')) qs('statusCreate').innerText = 'Save response: ' + JSON.stringify(res);
+          qs('statusCreate').innerText = 'Save response: ' + JSON.stringify(res);
         }
-      } catch(e){
-        if (qs('statusCreate')) qs('statusCreate').innerText = 'Save error: ' + String(e);
+      } catch(err){
+        qs('statusCreate').innerText = 'Save error: ' + String(err);
+        dbg('debugCreate',{error:String(err)});
       }
     });
-  } else {
-    console.warn('create/save button not found (btnSave)');
   }
 }
 
-/* init */
+/* initDropdowns + main init */
 async function init(){
   if (!window.APPSCRIPT_URL || window.APPSCRIPT_URL.trim() === '') { dbg('debugDash','Set window.APPSCRIPT_URL'); return; }
   try {
-    await initDropdowns();
+    const dd = await callApi('getDropdownData','GET');
+    if (dd && dd.ok && dd.data) {
+      const dt = dd.data;
+      if (qs('lastUpdate')) qs('lastUpdate').innerText = 'Last Update: ' + (dt.updateTime || '');
+      populate('year', dt.years || []);
+      populate('work', dt.works || []);
+      populate('status', dt.status || []);
+      populate('engineer', dt.engineers || []);
+      window._gpsByEngineer = dt.gpsByEngineer || {};
+
+      // Category: prefer dt.categories; if empty -> fallback to column 20 (index 19) extracted from rows
+      let catList = Array.isArray(dt.categories) ? uniqClean(dt.categories) : [];
+      if (!catList || catList.length === 0) {
+        try {
+          // get rows (unfiltered) and extract column index 19 (20th col)
+          const rowsRes = await callApi('getFilteredData','POST',{ filter: {}, userid: '' });
+          let rows = [];
+          if (rowsRes && Array.isArray(rowsRes)) rows = rowsRes;
+          else if (rowsRes && rowsRes.ok && Array.isArray(rowsRes.rows)) rows = rowsRes.rows;
+          else if (rowsRes && Array.isArray(rowsRes.rows)) rows = rowsRes.rows;
+          else if (rowsRes && rowsRes.rows && Array.isArray(rowsRes.rows)) rows = rowsRes.rows;
+          const rawCats = (rows||[]).map(r => {
+            if (!Array.isArray(r)) return '';
+            // index 19 -> column 20
+            return (r[19] === undefined || r[19] === null) ? '' : (''+r[19]).trim();
+          });
+          catList = uniqClean(rawCats);
+        } catch(e){ dbg('debugDash',{categoryFallbackError: String(e)}); }
+      }
+      populate('category', catList || []);
+
+      // populate create-panel panchayats (multi-select)
+      const cPans = qs('c_panchayats');
+      if (cPans) {
+        cPans.innerHTML = '';
+        const allPans = dt.allPanchayats || [];
+        (allPans||[]).forEach(p=>{
+          if (!p) return;
+          const o = document.createElement('option'); o.value = p; o.textContent = p; cPans.appendChild(o);
+        });
+      }
+
+      // populate posts for create panel
+      try {
+        let postsRes = await callApi('getPostOptionsFromUserIdSheet','GET');
+        let posts = [];
+        if (postsRes && postsRes.ok && Array.isArray(postsRes.result)) posts = postsRes.result;
+        else if (Array.isArray(postsRes)) posts = postsRes;
+        if ((!posts || posts.length === 0) && dt && Array.isArray(dt.posts)) posts = dt.posts;
+        if (!posts || posts.length === 0) posts = ['Engg','GRS','Schive','AE','Other'];
+
+        const cPost = qs('c_post');
+        if (cPost) {
+          cPost.innerHTML = '';
+          posts.forEach(p=>{
+            if (p === null || p === undefined) return;
+            const s = (''+p).trim();
+            if (!s) return;
+            const o = document.createElement('option'); o.value = s; o.textContent = s; cPost.appendChild(o);
+          });
+        }
+      } catch(e){
+        dbg('debugDash',{postPopulateError: String(e)});
+        const cPost = qs('c_post');
+        if (cPost && cPost.options.length === 1 && (cPost.options[0].text||'').toLowerCase().indexOf('loading') !== -1) {
+          cPost.innerHTML = '';
+          ['Engg','GRS','Schive','AE','Other'].forEach(p=>{
+            const o = document.createElement('option'); o.value = p; o.textContent = p; cPost.appendChild(o);
+          });
+        }
+      }
+
+      dbg('debugDash',{dropdowns:dt, categoryUsed: catList});
+    } else {
+      dbg('debugDash',{error:dd});
+    }
   } catch(err){ dbg('debugDash',{error:String(err)}); }
 
-  // wire UI buttons (apply/reset/create)
+  // wire UI buttons (apply/reset/create/save)
   wireControls();
 
-  // if user already set in loginInput, try to fetch table
+  // attempt to auto-fetch if user already present input
   const userid = qs('loginInput')?qs('loginInput').value.trim():'';
   if (userid) {
     try { await fetchTable({}, userid); } catch(e){ dbg('debugDash',{error:String(e)}); }
