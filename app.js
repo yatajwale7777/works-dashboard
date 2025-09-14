@@ -4,7 +4,7 @@ window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbz34Ak_pwJHdnVAv
 
 /* helpers */
 function qs(id){ return document.getElementById(id); }
-function dbg(id,obj){ try{ qs(id).textContent = typeof obj === 'string' ? obj : JSON.stringify(obj,null,2); } catch(e){ console.log(e); } }
+function dbg(id,obj){ try{ qs(id).textContent = typeof obj === 'string' ? obj : JSON.stringify(obj,null,2); } catch(e){ console.log(id,obj); } }
 function escapeHtml(s){ return (''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function toNum(v){ if (v===null||v===undefined) return NaN; const s=(''+v).replace(/,/g,'').trim(); if(s==='') return NaN; const n=Number(s); return isNaN(n)?NaN:n; }
 function fmt(n){ if (n===''||n===null||n===undefined) return ''; if (isNaN(n)) return ''; if (Math.abs(n)>=1000) return Number(n).toLocaleString(); if (Math.abs(n - Math.round(n))>0 && Math.abs(n) < 1) return Number(n).toFixed(4); if (Math.abs(n - Math.round(n))>0) return Number(n).toFixed(4); return String(Math.round(n)); }
@@ -18,7 +18,6 @@ async function safeFetchJson(response){
 }
 
 /* JSONP helper fallback (if CORS blocks fetch) */
-/* returns a Promise that resolves with parsed JSON */
 function jsonpFetch(url, cbParam='callback', timeoutMs=8000){
   return new Promise((resolve, reject) => {
     const cbName = '__jsonp_cb_' + Math.random().toString(36).slice(2);
@@ -37,7 +36,6 @@ function jsonpFetch(url, cbParam='callback', timeoutMs=8000){
 async function callApi(action, method='GET', payload=null){
   if (!window.APPSCRIPT_URL) return Promise.reject(new Error('APPSCRIPT_URL not set'));
 
-  // prefer fetch; if CORS fails, try JSONP (if backend supports callback param)
   if (method === 'GET') {
     const u = new URL(window.APPSCRIPT_URL);
     u.searchParams.set('action', action);
@@ -46,7 +44,6 @@ async function callApi(action, method='GET', payload=null){
       const resp = await fetch(u.toString(), { method:'GET', mode:'cors' });
       return await safeFetchJson(resp);
     } catch(err){
-      // try JSONP fallback
       try {
         const data = await jsonpFetch(u.toString(), 'callback');
         return data;
@@ -59,7 +56,6 @@ async function callApi(action, method='GET', payload=null){
       const resp = await fetch(window.APPSCRIPT_URL, { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8' }, body: params.toString(), mode:'cors' });
       return await safeFetchJson(resp);
     } catch(err){
-      // Try GET JSONP fallback for POST-like action (encode payload to query params) only if safe
       try {
         const u = new URL(window.APPSCRIPT_URL);
         u.searchParams.set('action', action);
@@ -86,15 +82,9 @@ function sanitizeFilter(input){
   return out;
 }
 
-/* ---------- RENDER TABLE (same as before) ---------- */
-/* (keep your existing renderTable / modal functions) */
-/* For brevity copy your renderTable and modal functions here. */
-/* I'll reuse your existing renderTable + modal code with no change. */
-  
-/* ---------- pasted renderTable + modal code ---------- */
-/* (I will re-use your earlier renderTable / installRowClickHandlers / showModalDetail / modal export / export main table) */
-
-/* ---------- (BEGIN) Render & modal code (unchanged) ---------- */
+/* ---------- (BEGIN) Render & modal code (copied from your file) ---------- */
+/* ... your renderTable, installRowClickHandlers, showModalDetail, modal export, export main table ... */
+/* (I am inserting your previously provided renderTable + modal code unchanged) */
 
 function renderTable(rows){
   const out = qs('output'); if (!out) return;
@@ -414,7 +404,6 @@ async function fetchTable(filter, userid){
     else if (res.result && Array.isArray(res.result)) rows = res.result;
     else if (res.data && res.data.rows && Array.isArray(res.data.rows)) rows = res.data.rows;
     else {
-      // if backend returned object that looks like normal array
       try {
         const maybe = Object.values(res).find(v => Array.isArray(v));
         if (Array.isArray(maybe)) rows = maybe;
@@ -422,11 +411,11 @@ async function fetchTable(filter, userid){
     }
 
     renderTable(rows);
-  } catch(err){ dbg('debugDash',{fetchTableError:String(err)}); }
+  } catch(err){ dbg('debugDash',{fetchTableError:String(err)}); console.error(err); }
 }
 
 /* Login / Logout (simple) */
-if (qs('loginBtn')) qs('loginBtn').addEventListener('click', ()=>{ const v = qs('loginInput').value.trim(); if (!v) return alert('Enter UserID or Name'); doLogin(v); });
+if (qs('loginBtn')) qs('loginBtn').addEventListener('click', ()=>{ const v = (qs('loginInput')?qs('loginInput').value:'').trim(); if (!v) return alert('Enter UserID or Name'); doLogin(v); });
 if (qs('logoutBtn')) qs('logoutBtn').addEventListener('click', ()=>{ if(qs('loginInput')) qs('loginInput').value=''; if(qs('userInfo')) qs('userInfo').innerText=''; if(qs('filtersCard')) qs('filtersCard').style.display='none'; if(qs('output')) qs('output').innerHTML=''; if(qs('logoutBtn')) qs('logoutBtn').style.display='none'; });
 
 async function doLogin(val){
@@ -451,42 +440,45 @@ async function doLogin(val){
     }
     if (qs('filtersCard')) qs('filtersCard').style.display = 'block';
     await fetchTable({}, u.userid);
-  } catch(err){ dbg('debugDash',{loginError:String(err)}); alert('Login error: '+String(err)); }
+  } catch(err){ dbg('debugDash',{loginError:String(err)}); alert('Login error: '+String(err)); console.error(err); }
 }
 
 /* UI controls wiring: apply / reset / create tab fallback */
 function wireControls(){
-  // apply button
-  let apply = qs('applyBtn') || document.querySelector('[data-action="applyFilter"]');
+  // apply button: try multiple selectors including filterBtn
+  let apply = qs('applyBtn') || qs('filterBtn') || document.querySelector('[data-action="applyFilter"]') || document.querySelector('#filterBtn');
   if (apply) {
     apply.addEventListener('click', ()=> {
-      // collect filter values from selects/inputs
+      // collect filter values from selects/inputs (multiple fallbacks)
+      const searchEl = qs('search') || qs('searchInput') || document.querySelector('input[type="search"]') || document.querySelector('input[name="search"]');
       const filter = {
-        engineer: qs('engineer')?qs('engineer').value:'',
-        gp: qs('gp')?qs('gp').value:'',
-        work: qs('work')?qs('work').value:'',
-        status: qs('status')?qs('status').value:'',
-        year: qs('year')?qs('year').value:'',
-        category: qs('category')?qs('category').value:'',
-        search: qs('search')?qs('search').value:''
+        engineer: (qs('engineer')?qs('engineer').value:'') || '',
+        gp: (qs('gp')?qs('gp').value:'') || '',
+        work: (qs('work')?qs('work').value:'') || '',
+        status: (qs('status')?qs('status').value:'') || '',
+        year: (qs('year')?qs('year').value:'') || '',
+        category: (qs('category')?qs('category').value:'') || '',
+        search: (searchEl?searchEl.value:'') || ''
       };
-      const userid = qs('loginInput')?qs('loginInput').value.trim():'';
+      console.log('Applying filter (fallback handler):', filter);
+      const userid = (qs('loginInput')?qs('loginInput').value.trim():'');
       fetchTable(filter, userid);
     });
   } else {
-    console.warn('applyBtn not found — ensure button id="applyBtn" or data-action="applyFilter" exists');
+    console.warn('applyBtn not found — ensure button id="applyBtn" or data-action="applyFilter" or id="filterBtn" exists');
   }
 
   // reset button
-  let reset = qs('resetBtn') || document.querySelector('[data-action="resetFilters"]');
+  let reset = qs('resetBtn') || document.querySelector('[data-action="resetFilters"]') || qs('filterReset') || document.querySelector('#resetBtn');
   if (reset) {
     reset.addEventListener('click', ()=>{
-      ['engineer','gp','work','status','year','category','search'].forEach(id=>{
+      ['engineer','gp','work','status','year','category'].forEach(id=>{
         const el = qs(id);
         if (!el) return;
         if (el.tagName === 'SELECT' || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') el.value = '';
       });
-      // optionally re-fetch full table if logged in
+      const searchEl = qs('search') || qs('searchInput') || document.querySelector('input[type="search"]') || document.querySelector('input[name="search"]');
+      if (searchEl) searchEl.value = '';
       const userid = qs('loginInput')?qs('loginInput').value.trim():'';
       if (userid) fetchTable({}, userid);
     });
@@ -494,17 +486,18 @@ function wireControls(){
     console.warn('resetBtn not found — ensure button id="resetBtn" or data-action="resetFilters" exists');
   }
 
-  // create / open userid page tab control
-  let create = qs('createBtn') || document.querySelector('[data-action="openCreateUser"]');
+  // create / open userid page tab control (multiple fallbacks)
+  let create = qs('createBtn') || document.querySelector('[data-action="openCreateUser"]') || qs('createUserBtn');
   if (create) {
     create.addEventListener('click', ()=>{
-      // if you have a tab control with id tabCreate, simulate click
-      const tab = qs('tabCreate');
-      if (tab) tab.click();
-      else {
-        // fallback: try to show create user panel if exists
-        const panel = qs('createUserPanel') || document.getElementById('createUser');
+      const tab = qs('tabCreate') || document.querySelector('[data-tab="create"]');
+      if (tab) {
+        try { tab.click(); }
+        catch(e){ tab.dispatchEvent(new Event('click')); }
+      } else {
+        const panel = qs('createUserPanel') || document.getElementById('createUser') || qs('createCard');
         if (panel) panel.style.display = 'block';
+        else console.warn('Create user panel not found - ensure id="createUserPanel" or id="createUser" or id="createCard" exists');
       }
     });
   } else {
@@ -528,7 +521,7 @@ async function init(){
       window._gpsByEngineer = dt.gpsByEngineer || {};
       dbg('debugDash',{dropdowns:dt});
     } else dbg('debugDash',{error:dd});
-  } catch(err){ dbg('debugDash',{error:String(err)}); }
+  } catch(err){ dbg('debugDash',{error:String(err)}); console.error(err); }
 
   // wire UI buttons (apply/reset/create)
   wireControls();
@@ -536,7 +529,7 @@ async function init(){
   // if user already set in loginInput, try to fetch table
   const userid = qs('loginInput')?qs('loginInput').value.trim():'';
   if (userid) {
-    try { await fetchTable({}, userid); } catch(e){ dbg('debugDash',{error:String(e)}); }
+    try { await fetchTable({}, userid); } catch(e){ dbg('debugDash',{error:String(e)}); console.error(e); }
   }
 }
 
