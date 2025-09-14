@@ -220,7 +220,7 @@ function renderTable(rows){
     });
 
     const payload = Object.assign({}, map);
-    html += '<tr data-payload=\'' + escapeHtml(JSON.stringify(payload)) + '\'>';
+    html += '<tr data-payload=\'' + escapeHtml(JSON.stringify(payload)) + '\'>";
     html += '<td>' + (ridx + 1) + '</td>';
     disp.forEach(cell => html += '<td>' + escapeHtml(cell) + '</td>');
     html += '</tr>';
@@ -506,8 +506,6 @@ async function fetchTable(filter, userid){
     rows = (rows||[]).map(r => {
       if (!Array.isArray(r)) return r;
       const rr = r.slice();
-      // do not alter human-readable label in cell, but if needed we can stash normalized value somewhere
-      // (we'll rely on clientSideFilterRows to normalize when matching)
       return rr;
     });
 
