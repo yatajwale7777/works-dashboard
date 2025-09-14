@@ -600,6 +600,75 @@ async function init(){
     try { await fetchTable({}, userid); } catch(e){ dbg('debugDash',{error:String(e)}); }
   }
 }
+// ---------- Robust fallback wiring (paste at end of app.js) ----------
+(function(){
+  function onceAttach(selectorOrEl, event, fn){
+    var el = typeof selectorOrEl === 'string' ? document.querySelector(selectorOrEl) : selectorOrEl;
+    if (!el) return false;
+    el.removeEventListener(event, fn); // best-effort
+    el.addEventListener(event, fn);
+    return true;
+  }
 
+  // Apply handler (uses getFilterFromUI & loginInput)
+  async function applyHandler(e){
+    e && e.preventDefault && e.preventDefault();
+    const userid = (document.getElementById('loginInput') && document.getElementById('loginInput').value) ? document.getElementById('loginInput').value.trim() : '';
+    if (!userid) { alert('Please login first'); console.warn('Apply blocked: no userid'); return; }
+    const filt = (typeof getFilterFromUI === 'function') ? getFilterFromUI() : {};
+    console.log('Applying filter (fallback handler):', filt, ' userid=', userid);
+    // call fetchTable if available
+    if (typeof fetchTable === 'function') {
+      try { await fetchTable(filt, userid); }
+      catch(err){ console.error('fetchTable error:', err); }
+    } else {
+      console.warn('fetchTable not available on page.');
+    }
+  }
+
+  // Reset handler
+  function resetHandler(e){
+    e && e.preventDefault && e.preventDefault();
+    ['engineer','gp','work','status','year','category','searchInput'].forEach(id=>{
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (el.tagName === 'SELECT') el.selectedIndex = 0;
+      else el.value = '';
+    });
+    console.log('Filters reset (fallback).');
+    // re-fetch if logged in
+    const userid = (document.getElementById('loginInput') && document.getElementById('loginInput').value) ? document.getElementById('loginInput').value.trim() : '';
+    if (userid && typeof fetchTable === 'function') fetchTable({}, userid).catch(e=>console.error(e));
+  }
+
+  // Create-user open fallback
+  function createOpenFallback(e){
+    e && e.preventDefault && e.preventDefault();
+    // try existing tab click
+    const tab = document.getElementById('tabCreate') || document.getElementById('createUserBtn') || document.querySelector('[data-action="createUser"]');
+    if (tab) { try { tab.click(); console.log('Clicked create tab control'); return; } catch(err){ console.warn(err); } }
+    // try to reveal panel
+    const panel = document.getElementById('createUserPanel') || document.querySelector('.create-user-panel');
+    if (panel) { panel.style.display = 'block'; panel.scrollIntoView({behavior:'smooth'}); console.log('Showed create user panel'); return; }
+    // fallback: show alert
+    alert('Create User panel not found — ensure element with id="tabCreate" or id="createUserPanel" exists in HTML.');
+  }
+
+  // try attach to many possibilities
+  const applied = onceAttach('#applyBtn','click', applyHandler)
+    || onceAttach('[data-action="applyFilter"]','click', applyHandler)
+    || (function(){ var byText = Array.from(document.querySelectorAll('button,a')).find(x=>/apply/i.test(x.textContent)); if (byText) { onceAttach(byText,'click', applyHandler); return true;} return false; })();
+
+  const resetBound = onceAttach('#resetBtn','click', resetHandler)
+    || onceAttach('[data-action="resetFilters"]','click', resetHandler)
+    || (function(){ var byText = Array.from(document.querySelectorAll('button,a')).find(x=>/reset|clear/i.test(x.textContent)); if (byText) { onceAttach(byText,'click', resetHandler); return true;} return false; })();
+
+  const createBound = onceAttach('#createUserBtn','click', createOpenFallback)
+    || onceAttach('#tabCreate','click', createOpenFallback)
+    || onceAttach('[data-action="createUser"]','click', createOpenFallback)
+    || (function(){ var byText = Array.from(document.querySelectorAll('button,a')).find(x=>/create|new user|add user/i.test(x.textContent)); if (byText) { onceAttach(byText,'click', createOpenFallback); return true;} return false; })();
+
+  console.log('Fallback wiring done. applyBound=', !!applied, ' resetBound=', !!resetBound, ' createBound=', !!createBound);
+})();
 /* start */
 (async function(){ await init(); })();
