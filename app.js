@@ -1,4 +1,4 @@
-// app.js — FINAL with working category filter (client-side fallback)
+// app.js — Complete, fixed version (category filter client-side fallback + normalized category options)
 
 // ====== Configuration: set your Apps Script URL here ======
 window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbz34Ak_pwJHdnVAvYsP9CiCQkd7EO50hDMySIy8a2O4OMt5ZAx7EtkKv4Anb-eYDQn90Q/exec";
@@ -6,19 +6,23 @@ window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbz34Ak_pwJHdnVAv
 
 /* helpers */
 function qs(id){ return document.getElementById(id); }
-function dbg(id,obj){ try{ qs(id).textContent = typeof obj === 'string' ? obj : JSON.stringify(obj,null,2); } catch(e){ console.log(e); } }
+function dbg(id,obj){ try{ const el = qs(id); if (el) el.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj,null,2); else console.log(id,obj); } catch(e){ console.log(e); } }
 function escapeHtml(s){ return (''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function decodeHtml(s){ if (s === null || s === undefined) return s; return s.replace(/&quot;/g,'"').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#39;/g,"'"); }
 function toNum(v){ if (v===null||v===undefined) return NaN; const s=(''+v).replace(/,/g,'').trim(); if(s==='') return NaN; const n=Number(s); return isNaN(n)?NaN:n; }
 function fmt(n){ if (n===''||n===null||n===undefined) return ''; if (isNaN(n)) return ''; if (Math.abs(n)>=1000) return Number(n).toLocaleString(); if (Math.abs(n - Math.round(n))>0 && Math.abs(n) < 1) return Number(n).toFixed(4); if (Math.abs(n - Math.round(n))>0) return Number(n).toFixed(4); return String(Math.round(n)); }
-function decodeHtml(s){ if (s === null || s === undefined) return s; return s.replace(/&quot;/g,'"').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#39;/g,"'"); }
 
-/* normalize category */
-function normalizeCategory(s){ if (s === null || s === undefined) return ''; s = (''+s).trim(); s = s.replace(/\s+/g,' '); return s.toUpperCase(); }
+/* normalize category (used for option values and comparisons) */
+function normalizeCategory(s){ if (s === null || s === undefined) return ''; return (''+s).trim().replace(/\s+/g,' ').toUpperCase(); }
 
 /* safe fetch helper */
-async function safeFetchJson(response){ const txt = await response.text(); try { return JSON.parse(txt); } catch(e){ return { ok:false, error:'non-json-response', status: response.status, statusText: response.statusText, raw: txt }; } }
+async function safeFetchJson(response){
+  const txt = await response.text();
+  try { return JSON.parse(txt); }
+  catch(e){ return { ok:false, error:'non-json-response', status: response.status, statusText: response.statusText, raw: txt }; }
+}
 
-/* JSONP helper fallback */
+/* JSONP helper fallback (if CORS blocks fetch) */
 function jsonpFetch(url, cbParam='callback', timeoutMs=8000){
   return new Promise((resolve, reject) => {
     const cbName = '__jsonp_cb_' + Math.random().toString(36).slice(2);
@@ -33,7 +37,7 @@ function jsonpFetch(url, cbParam='callback', timeoutMs=8000){
   });
 }
 
-/* network */
+/* network (GET/POST) - resilient to HTML/404 responses and with JSONP fallback */
 async function callApi(action, method='GET', payload=null){
   if (!window.APPSCRIPT_URL) return Promise.reject(new Error('APPSCRIPT_URL not set'));
 
@@ -45,7 +49,10 @@ async function callApi(action, method='GET', payload=null){
       const resp = await fetch(u.toString(), { method:'GET', mode:'cors' });
       return await safeFetchJson(resp);
     } catch(err){
-      try { const data = await jsonpFetch(u.toString(), 'callback'); return data; } catch(e){ return Promise.reject(e); }
+      try {
+        const data = await jsonpFetch(u.toString(), 'callback');
+        return data;
+      } catch(e){ return Promise.reject(e); }
     }
   } else {
     const params = new URLSearchParams(); params.set('action', action);
@@ -65,7 +72,7 @@ async function callApi(action, method='GET', payload=null){
   }
 }
 
-/* sanitizeFilter */
+/* sanitizeFilter - ensures expected keys exist and are strings; normalize category */
 function sanitizeFilter(input){
   const keys = ['engineer','gp','work','status','year','search','category'];
   const out = {};
@@ -75,20 +82,70 @@ function sanitizeFilter(input){
     if (v === null || v === undefined) { out[k] = ''; return; }
     if (typeof v === 'string') v = v.trim();
     else v = (''+v).trim();
-    if (k==='category') v = normalizeCategory(v);
+    if (k === 'category') v = normalizeCategory(v);
     out[k] = v;
   });
   return out;
 }
 
-/* uniqClean */
-function uniqClean(arr){ const seen = new Set(); const out = []; (arr||[]).forEach(x=>{ if (x === null || x === undefined) return; let s = (''+x).trim(); if (!s) return; const low = s.toLowerCase(); if (low === 'total' || low === 'na' || low === 'n/a' || low === 'nan') return; if (/^[\d\.\-\,\s]+$/.test(s)) return; if (s.length <= 1) return; s = s.replace(/\s+/g,' ').trim(); if (seen.has(s)) return; seen.add(s); out.push(s); }); out.sort(); return out; }
+/* helper: unique + clean small utility used for categories */
+function uniqClean(arr){
+  const seen = new Set();
+  const out = [];
+  (arr||[]).forEach(x=>{
+    if (x === null || x === undefined) return;
+    let s = (''+x).trim();
+    if (!s) return;
+    const low = s.toLowerCase();
+    if (low === 'total' || low === 'na' || low === 'n/a' || low === 'nan') return;
+    if (/^[\d\.\-\,\s]+$/.test(s)) return;
+    if (s.length <= 1) return;
+    s = s.replace(/\s+/g,' ').trim();
+    if (seen.has(s)) return;
+    seen.add(s);
+    out.push(s);
+  });
+  out.sort();
+  return out;
+}
 
-/* populate */
-function populate(id, arr){ const sel = qs(id); if(!sel) return; const cur = sel.value; sel.innerHTML = '<option value="">--All--</option>'; (arr||[]).forEach(v=>{ if (v === null || v === undefined) return; const sv = (''+v).trim(); if (sv === '') return; const o = document.createElement('option'); o.value = sv; o.textContent = sv; sel.appendChild(o); }); try { if (cur) sel.value = cur; } catch(e){} }
-function populateCategory(id, arr){ const sel = qs(id); if(!sel) return; const cur = sel.value; sel.innerHTML = '<option value="">--All--</option>'; (arr||[]).forEach(v=>{ if (!v) return; const label = (''+v).trim(); if (!label) return; const o = document.createElement('option'); o.value = normalizeCategory(label); o.textContent = label; sel.appendChild(o); }); try { if (cur) sel.value = cur; } catch(e){} }
+/* populate helpers */
+function populate(id, arr){
+  const sel = qs(id);
+  if(!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">--All--</option>';
+  (arr||[]).forEach(v=>{
+    if (v === null || v === undefined) return;
+    const sv = (''+v).trim();
+    if (sv === '') return;
+    const o = document.createElement('option');
+    o.value = sv;
+    o.textContent = sv;
+    sel.appendChild(o);
+  });
+  try { if (cur) sel.value = cur; } catch(e){}
+}
 
-/* client-side filter fallback */
+/* populateCategory: option.value = normalized, option.text = label */
+function populateCategory(id, arr){
+  const sel = qs(id);
+  if(!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">--All--</option>';
+  (arr||[]).forEach(v=>{
+    if (v === null || v === undefined) return;
+    const label = (''+v).trim();
+    if (label === '') return;
+    const o = document.createElement('option');
+    o.value = normalizeCategory(label); // normalized for comparisons
+    o.textContent = label; // human label
+    sel.appendChild(o);
+  });
+  try { if (cur) sel.value = cur; } catch(e){}
+}
+
+/* client-side filter fallback (works on row-arrays) */
 function clientSideFilterRows(rows, filt){
   filt = filt || {};
   const catFilter = (filt.category||'').toString().trim();
@@ -102,7 +159,6 @@ function clientSideFilterRows(rows, filt){
   return (rows||[]).filter(r=>{
     if (!Array.isArray(r)) return false;
     const rr = r.map(x=> x? (''+x).trim(): '');
-
     if (catFilter){
       const wantCat = normalizeCategory(catFilter);
       const rowCat = normalizeCategory(rr[19]||'');
@@ -130,7 +186,8 @@ function clientSideFilterRows(rows, filt){
   });
 }
 
-/* ---------- RENDER TABLE (mapped to sheet columns) ---------- */
+/* ---------- RENDER TABLE (same as your original) ---------- */
+
 function renderTable(rows){
   const out = qs('output'); if (!out) return;
   out.innerHTML = '';
@@ -273,6 +330,7 @@ function installRowClickHandlers(){
   });
 }
 
+/* Modal logic (unchanged) */
 const modalOverlay = qs('modalOverlay'), modalTitle = qs('modalTitle'), modalMeta = qs('modalMeta'), modalBody = qs('modalBody');
 let currentModalData = null;
 
@@ -348,7 +406,7 @@ function showModalDetail(map){
 
   let balMandaysDisplay = '';
   try {
-    const bm = Number(('' + (balanceMandaysRaw || '')).replace(/,/g,''));
+    const bm = Number(('' + (balanceMandaysRaw || '')).replace(/,/g,'')); 
     if (!isNaN(bm)) balMandaysDisplay = String(Math.round(bm));
     else balMandaysDisplay = (balanceMandaysRaw || '');
   } catch(e){ balMandaysDisplay = (balanceMandaysRaw || ''); }
@@ -366,6 +424,7 @@ function closeModal(){ if(modalOverlay){ modalOverlay.style.display = 'none'; do
 if (qs('modalClose')) qs('modalClose').addEventListener('click', closeModal);
 if (modalOverlay) modalOverlay.addEventListener('click', function(e){ if (e.target === modalOverlay) closeModal(); });
 
+/* export modal CSV */
 if (qs('modalExport')) qs('modalExport').addEventListener('click', function(){
   const map = currentModalData; if (!map) return alert('No data');
   const planned = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'].map(k=> toNum(map[k]));
@@ -395,6 +454,7 @@ if (qs('modalExport')) qs('modalExport').addEventListener('click', function(){
   const a = document.createElement('a'); a.href = url; a.download = ((map['Name of work']||'work').toString().replace(/[^\w\-]/g,'_').slice(0,60)) + '_details.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 });
 
+/* export whole table */
 if (qs('exportBtn')) qs('exportBtn').addEventListener('click', ()=> {
   const table = qs('dataTable'); if (!table) return alert('No table to export');
   const rows = Array.from(table.querySelectorAll('thead tr, tbody tr'));
@@ -412,8 +472,8 @@ if (qs('exportBtn')) qs('exportBtn').addEventListener('click', ()=> {
   const a = document.createElement('a'); a.href = url; a.download = 'works_dashboard.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 });
 
-/* safer populate */
-function populate(id, arr){
+/* safer populate (non-category fields) */
+function populateSimple(id, arr){
   const sel = qs(id);
   if(!sel) return;
   const cur = sel.value;
@@ -430,35 +490,12 @@ function populate(id, arr){
   try { if (cur) sel.value = cur; } catch(e){}
 }
 
-/* populate category with normalized option values but readable labels */
-function populateCategory(id, arr){
-  const sel = qs(id);
-  if(!sel) return;
-  const cur = sel.value;
-  sel.innerHTML = '<option value="">--All--</option>';
-  (arr||[]).forEach(v=>{
-    if (v === null || v === undefined) return;
-    const label = (''+v).trim();
-    if (!label) return;
-    const o = document.createElement('option');
-    o.value = normalizeCategory(label); // store normalized value for consistent filtering
-    o.textContent = label; // human-friendly label
-    sel.appendChild(o);
-  });
-  try { if (cur) sel.value = cur; } catch(e){}
-}
-
-/* client-side filter fallback: accepts rows (array of row-arrays) and filt (sanitized) */
-/* (already defined above as clientSideFilterRows) */
-
-/* fetchTable (sanitized) with client-side fallback */
+/* fetch table (sanitized) + apply client-side category filter always */
 async function fetchTable(filter, userid){
   try {
     if (!userid) { alert('Please login first'); return; }
 
-    let filt = sanitizeFilter(filter || {});
-    if (filt.category) filt.category = normalizeCategory(filt.category);
-
+    const filt = sanitizeFilter(filter || {});
     dbg('debugDash',{ sendingFilter: filt, userid: userid });
 
     const res = await callApi('getFilteredData','POST',{ filter: filt, userid: userid });
@@ -476,14 +513,15 @@ async function fetchTable(filter, userid){
       } catch(e){}
     }
 
-    // Keep raw for display; normalize in matching step as needed
+    // ensure rows are arrays and have at least 20 columns (so index 19 exists)
     rows = (rows||[]).map(r => {
       if (!Array.isArray(r)) return r;
       const rr = r.slice();
+      while (rr.length < 20) rr.push('');
       return rr;
     });
 
-    // apply client-side filter ALWAYS as fallback/guarantee
+    // ALWAYS apply client-side filter as fallback; this guarantees category filter works
     const clientFiltered = clientSideFilterRows(rows, filt);
 
     renderTable(clientFiltered);
@@ -511,7 +549,7 @@ async function doLogin(val){
         const arr = (gpsByEngineer[e]||[]).map(x=>(''+x).trim().toLowerCase());
         return (u.panchayats||[]).some(up => arr.indexOf((''+up).trim().toLowerCase()) !== -1);
       });
-      populate('engineer', engines);
+      populateSimple('engineer', engines);
       window._engineers = engines.map(x=>(''+x).trim());
     }
     if (qs('filtersCard')) qs('filtersCard').style.display = 'block';
@@ -521,6 +559,7 @@ async function doLogin(val){
 
 /* UI controls wiring: apply / reset / create tab fallback / save user */
 function wireControls(){
+  // apply button (your HTML uses id="filterBtn")
   let apply = qs('filterBtn') || qs('applyBtn') || document.querySelector('[data-action="applyFilter"]');
   if (apply) {
     apply.addEventListener('click', ()=> {
@@ -540,6 +579,7 @@ function wireControls(){
     console.warn('applyBtn not found — ensure button id="filterBtn" exists');
   }
 
+  // reset button
   let reset = qs('resetBtn') || document.querySelector('[data-action="resetFilters"]');
   if (reset) {
     reset.addEventListener('click', ()=>{
@@ -555,10 +595,12 @@ function wireControls(){
     console.warn('resetBtn not found — ensure button id="resetBtn" exists');
   }
 
+  // Create / tab wiring
   const tabDash = qs('tabDashboard'), tabCreate = qs('tabCreate'), panelDash = qs('panelDashboard'), panelCreate = qs('panelCreate');
   if (tabDash) tabDash.addEventListener('click', ()=>{ if (tabDash) tabDash.classList.add('active'); if (tabCreate) tabCreate.classList.remove('active'); if (panelDash) panelDash.style.display='block'; if (panelCreate) panelCreate.style.display='none'; });
   if (tabCreate) tabCreate.addEventListener('click', ()=>{ if (tabCreate) tabCreate.classList.add('active'); if (tabDash) tabDash.classList.remove('active'); if (panelCreate) panelCreate.style.display='block'; if (panelDash) panelDash.style.display='none'; });
 
+  // also wire createBtn fallback if exists
   let create = qs('createBtn') || document.querySelector('[data-action="openCreateUser"]');
   if (create) {
     create.addEventListener('click', ()=>{
@@ -571,6 +613,7 @@ function wireControls(){
     });
   }
 
+  // Save button on Create panel
   const saveBtn = qs('btnSave');
   if (saveBtn) {
     saveBtn.addEventListener('click', async ()=>{
@@ -594,7 +637,8 @@ function wireControls(){
         dbg('debugCreate',{result:res});
         if (res && res.ok && res.result) {
           qs('statusCreate').innerText = 'Saved: ' + JSON.stringify(res.result);
-          await init();
+          // refresh dropdowns in case new user added
+          await init(); 
         } else if (res && res.result) {
           qs('statusCreate').innerText = 'Saved: ' + JSON.stringify(res.result);
           await init();
@@ -617,10 +661,10 @@ async function init(){
     if (dd && dd.ok && dd.data) {
       const dt = dd.data;
       if (qs('lastUpdate')) qs('lastUpdate').innerText = 'Last Update: ' + (dt.updateTime || '');
-      populate('year', dt.years || []);
-      populate('work', dt.works || []);
-      populate('status', dt.status || []);
-      populate('engineer', dt.engineers || []);
+      populateSimple('year', dt.years || []);
+      populateSimple('work', dt.works || []);
+      populateSimple('status', dt.status || []);
+      populateSimple('engineer', dt.engineers || []);
       window._gpsByEngineer = dt.gpsByEngineer || {};
 
       // Category: prefer dt.categories; if empty -> fallback to column 20 (index 19) extracted from rows
@@ -640,8 +684,6 @@ async function init(){
           catList = uniqClean(rawCats);
         } catch(e){ dbg('debugDash',{categoryFallbackError: String(e)}); }
       }
-
-      // populate category with normalized values
       populateCategory('category', catList || []);
 
       // populate create-panel panchayats (multi-select)
