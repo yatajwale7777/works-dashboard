@@ -1,3 +1,6 @@
+// app.js — category filter fixed
+// Updated: normalize category values so filtering works reliably (trim, collapse whitespace, uppercase)
+
 // ====== Configuration: set your Apps Script URL here ======
 window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbz34Ak_pwJHdnVAvYsP9CiCQkd7EO50hDMySIy8a2O4OMt5ZAx7EtkKv4Anb-eYDQn90Q/exec";
 // ============================================================
@@ -10,6 +13,9 @@ function toNum(v){ if (v===null||v===undefined) return NaN; const s=(''+v).repla
 function fmt(n){ if (n===''||n===null||n===undefined) return ''; if (isNaN(n)) return ''; if (Math.abs(n)>=1000) return Number(n).toLocaleString(); if (Math.abs(n - Math.round(n))>0 && Math.abs(n) < 1) return Number(n).toFixed(4); if (Math.abs(n - Math.round(n))>0) return Number(n).toFixed(4); return String(Math.round(n)); }
 function decodeHtml(s){ if (s === null || s === undefined) return s; return s.replace(/&quot;/g,'"').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#39;/g,"'"); }
 
+/* normalize category values so comparisons are consistent */
+function normalizeCategory(s){ if (s === null || s === undefined) return ''; s = (''+s).trim(); s = s.replace(/\s+/g,' '); return s.toUpperCase(); }
+
 /* safe fetch helper */
 async function safeFetchJson(response){
   const txt = await response.text();
@@ -18,7 +24,6 @@ async function safeFetchJson(response){
 }
 
 /* JSONP helper fallback (if CORS blocks fetch) */
-/* returns a Promise that resolves with parsed JSON */
 function jsonpFetch(url, cbParam='callback', timeoutMs=8000){
   return new Promise((resolve, reject) => {
     const cbName = '__jsonp_cb_' + Math.random().toString(36).slice(2);
@@ -37,7 +42,6 @@ function jsonpFetch(url, cbParam='callback', timeoutMs=8000){
 async function callApi(action, method='GET', payload=null){
   if (!window.APPSCRIPT_URL) return Promise.reject(new Error('APPSCRIPT_URL not set'));
 
-  // prefer fetch; if CORS fails, try JSONP (if backend supports callback param)
   if (method === 'GET') {
     const u = new URL(window.APPSCRIPT_URL);
     u.searchParams.set('action', action);
@@ -46,11 +50,7 @@ async function callApi(action, method='GET', payload=null){
       const resp = await fetch(u.toString(), { method:'GET', mode:'cors' });
       return await safeFetchJson(resp);
     } catch(err){
-      // try JSONP fallback
-      try {
-        const data = await jsonpFetch(u.toString(), 'callback');
-        return data;
-      } catch(e){ return Promise.reject(e); }
+      try { const data = await jsonpFetch(u.toString(), 'callback'); return data; } catch(e){ return Promise.reject(e); }
     }
   } else {
     const params = new URLSearchParams(); params.set('action', action);
@@ -59,7 +59,6 @@ async function callApi(action, method='GET', payload=null){
       const resp = await fetch(window.APPSCRIPT_URL, { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8' }, body: params.toString(), mode:'cors' });
       return await safeFetchJson(resp);
     } catch(err){
-      // Try GET JSONP fallback for POST-like action (encode payload to query params) only if safe
       try {
         const u = new URL(window.APPSCRIPT_URL);
         u.searchParams.set('action', action);
@@ -71,7 +70,7 @@ async function callApi(action, method='GET', payload=null){
   }
 }
 
-/* sanitizeFilter - ensures expected keys exist and are strings */
+/* sanitizeFilter - ensures expected keys exist and are strings; normalize category specifically */
 function sanitizeFilter(input){
   const keys = ['engineer','gp','work','status','year','search','category'];
   const out = {};
@@ -79,8 +78,8 @@ function sanitizeFilter(input){
   keys.forEach(k=>{
     let v = input[k];
     if (v === null || v === undefined) { out[k] = ''; return; }
-    if (typeof v === 'string') v = v.trim();
-    else v = (''+v).trim();
+    if (typeof v === 'string') v = v.trim(); else v = (''+v).trim();
+    if (k === 'category') v = normalizeCategory(v);
     out[k] = v;
   });
   return out;
@@ -108,7 +107,6 @@ function uniqClean(arr){
 }
 
 /* ---------- RENDER TABLE (same as your original) ---------- */
-/* I copied your renderTable + modal code (unchanged) */
 function renderTable(rows){
   const out = qs('output'); if (!out) return;
   out.innerHTML = '';
@@ -390,7 +388,7 @@ if (qs('exportBtn')) qs('exportBtn').addEventListener('click', ()=> {
   const a = document.createElement('a'); a.href = url; a.download = 'works_dashboard.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 });
 
-/* safer populate */
+/* safer populate - generic for selects */
 function populate(id, arr){
   const sel = qs(id);
   if(!sel) return;
@@ -408,12 +406,33 @@ function populate(id, arr){
   try { if (cur) sel.value = cur; } catch(e){}
 }
 
+/* populate category with normalized option values but readable labels */
+function populateCategory(id, arr){
+  const sel = qs(id);
+  if(!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">--All--</option>';
+  (arr||[]).forEach(v=>{
+    if (v === null || v === undefined) return;
+    const label = (''+v).trim();
+    if (!label) return;
+    const o = document.createElement('option');
+    o.value = normalizeCategory(label); // store normalized value for consistent filtering
+    o.textContent = label; // human-friendly label
+    sel.appendChild(o);
+  });
+  try { if (cur) sel.value = cur; } catch(e){}
+}
+
 /* fetch table (sanitized) */
 async function fetchTable(filter, userid){
   try {
     if (!userid) { alert('Please login first'); return; }
 
-    const filt = sanitizeFilter(filter || {});
+    let filt = sanitizeFilter(filter || {});
+    // ensure category is normalized (dropdown stores normalized value too)
+    if (filt.category) filt.category = normalizeCategory(filt.category);
+
     dbg('debugDash',{ sendingFilter: filt, userid: userid });
 
     const res = await callApi('getFilteredData','POST',{ filter: filt, userid: userid });
@@ -430,6 +449,16 @@ async function fetchTable(filter, userid){
         if (Array.isArray(maybe)) rows = maybe;
       } catch(e){}
     }
+
+    // If backend returns rows but category values inside rows are not normalized,
+    // optional: normalize row category cell to uppercase for client-side checks.
+    // (We keep server-side filtering primary; this is a fallback if server ignored category.)
+    rows = (rows||[]).map(r => {
+      if (!Array.isArray(r)) return r;
+      const rr = r.slice();
+      if (rr.length > 19) rr[19] = (rr[19]===undefined||rr[19]===null)?'': normalizeCategory(rr[19]);
+      return rr;
+    });
 
     renderTable(rows);
   } catch(err){ dbg('debugDash',{fetchTableError:String(err)}); }
@@ -466,7 +495,6 @@ async function doLogin(val){
 
 /* UI controls wiring: apply / reset / create tab fallback / save user */
 function wireControls(){
-  // apply button (your HTML uses id="filterBtn")
   let apply = qs('filterBtn') || qs('applyBtn') || document.querySelector('[data-action="applyFilter"]');
   if (apply) {
     apply.addEventListener('click', ()=> {
@@ -486,7 +514,6 @@ function wireControls(){
     console.warn('applyBtn not found — ensure button id="filterBtn" exists');
   }
 
-  // reset button
   let reset = qs('resetBtn') || document.querySelector('[data-action="resetFilters"]');
   if (reset) {
     reset.addEventListener('click', ()=>{
@@ -502,12 +529,10 @@ function wireControls(){
     console.warn('resetBtn not found — ensure button id="resetBtn" exists');
   }
 
-  // Create / tab wiring
   const tabDash = qs('tabDashboard'), tabCreate = qs('tabCreate'), panelDash = qs('panelDashboard'), panelCreate = qs('panelCreate');
   if (tabDash) tabDash.addEventListener('click', ()=>{ if (tabDash) tabDash.classList.add('active'); if (tabCreate) tabCreate.classList.remove('active'); if (panelDash) panelDash.style.display='block'; if (panelCreate) panelCreate.style.display='none'; });
   if (tabCreate) tabCreate.addEventListener('click', ()=>{ if (tabCreate) tabCreate.classList.add('active'); if (tabDash) tabDash.classList.remove('active'); if (panelCreate) panelCreate.style.display='block'; if (panelDash) panelDash.style.display='none'; });
 
-  // also wire createBtn fallback if exists
   let create = qs('createBtn') || document.querySelector('[data-action="openCreateUser"]');
   if (create) {
     create.addEventListener('click', ()=>{
@@ -520,7 +545,6 @@ function wireControls(){
     });
   }
 
-  // Save button on Create panel
   const saveBtn = qs('btnSave');
   if (saveBtn) {
     saveBtn.addEventListener('click', async ()=>{
@@ -544,7 +568,6 @@ function wireControls(){
         dbg('debugCreate',{result:res});
         if (res && res.ok && res.result) {
           qs('statusCreate').innerText = 'Saved: ' + JSON.stringify(res.result);
-          // refresh dropdowns in case new user added
           await init(); 
         } else if (res && res.result) {
           qs('statusCreate').innerText = 'Saved: ' + JSON.stringify(res.result);
@@ -578,7 +601,6 @@ async function init(){
       let catList = Array.isArray(dt.categories) ? uniqClean(dt.categories) : [];
       if (!catList || catList.length === 0) {
         try {
-          // get rows (unfiltered) and extract column index 19 (20th col)
           const rowsRes = await callApi('getFilteredData','POST',{ filter: {}, userid: '' });
           let rows = [];
           if (rowsRes && Array.isArray(rowsRes)) rows = rowsRes;
@@ -587,13 +609,14 @@ async function init(){
           else if (rowsRes && rowsRes.rows && Array.isArray(rowsRes.rows)) rows = rowsRes.rows;
           const rawCats = (rows||[]).map(r => {
             if (!Array.isArray(r)) return '';
-            // index 19 -> column 20
             return (r[19] === undefined || r[19] === null) ? '' : (''+r[19]).trim();
           });
           catList = uniqClean(rawCats);
         } catch(e){ dbg('debugDash',{categoryFallbackError: String(e)}); }
       }
-      populate('category', catList || []);
+
+      // populate category with normalized values
+      populateCategory('category', catList || []);
 
       // populate create-panel panchayats (multi-select)
       const cPans = qs('c_panchayats');
