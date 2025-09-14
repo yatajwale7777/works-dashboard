@@ -1,13 +1,11 @@
-// app.js — category filter fixed
-// Updated: normalize category values so filtering works reliably (trim, collapse whitespace, uppercase)
-
+// app.js — final (category normalization + client-side fallback)
 // ====== Configuration: set your Apps Script URL here ======
 window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbz34Ak_pwJHdnVAvYsP9CiCQkd7EO50hDMySIy8a2O4OMt5ZAx7EtkKv4Anb-eYDQn90Q/exec";
 // ============================================================
 
 /* helpers */
 function qs(id){ return document.getElementById(id); }
-function dbg(id,obj){ try{ qs(id).textContent = typeof obj === 'string' ? obj : JSON.stringify(obj,null,2); } catch(e){ console.log(e); } }
+function dbg(id,obj){ try{ const el = qs(id); if (!el) { console.log(id, obj); return; } el.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj,null,2); } catch(e){ console.log(e); } }
 function escapeHtml(s){ return (''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function toNum(v){ if (v===null||v===undefined) return NaN; const s=(''+v).replace(/,/g,'').trim(); if(s==='') return NaN; const n=Number(s); return isNaN(n)?NaN:n; }
 function fmt(n){ if (n===''||n===null||n===undefined) return ''; if (isNaN(n)) return ''; if (Math.abs(n)>=1000) return Number(n).toLocaleString(); if (Math.abs(n - Math.round(n))>0 && Math.abs(n) < 1) return Number(n).toFixed(4); if (Math.abs(n - Math.round(n))>0) return Number(n).toFixed(4); return String(Math.round(n)); }
@@ -78,7 +76,8 @@ function sanitizeFilter(input){
   keys.forEach(k=>{
     let v = input[k];
     if (v === null || v === undefined) { out[k] = ''; return; }
-    if (typeof v === 'string') v = v.trim(); else v = (''+v).trim();
+    if (typeof v === 'string') v = v.trim();
+    else v = (''+v).trim();
     if (k === 'category') v = normalizeCategory(v);
     out[k] = v;
   });
@@ -106,7 +105,7 @@ function uniqClean(arr){
   return out;
 }
 
-/* ---------- RENDER TABLE (same as your original) ---------- */
+/* ---------- RENDER TABLE (mapped to sheet columns) ---------- */
 function renderTable(rows){
   const out = qs('output'); if (!out) return;
   out.innerHTML = '';
@@ -324,7 +323,7 @@ function showModalDetail(map){
 
   let balMandaysDisplay = '';
   try {
-    const bm = Number(('' + (balanceMandaysRaw || '')).replace(/,/g,'')); 
+    const bm = Number(('' + (balanceMandaysRaw || '')).replace(/,/g,''));
     if (!isNaN(bm)) balMandaysDisplay = String(Math.round(bm));
     else balMandaysDisplay = (balanceMandaysRaw || '');
   } catch(e){ balMandaysDisplay = (balanceMandaysRaw || ''); }
@@ -424,13 +423,66 @@ function populateCategory(id, arr){
   try { if (cur) sel.value = cur; } catch(e){}
 }
 
-/* fetch table (sanitized) */
+/* client-side filter fallback: accepts rows (array of row-arrays) and filt (sanitized) */
+function clientSideFilterRows(rows, filt){
+  filt = filt || {};
+  const catFilter = (filt.category||'').toString().trim();
+  const searchFilter = (filt.search||'').toString().trim().toLowerCase();
+  const engineerFilter = (filt.engineer||'').toString().trim().toLowerCase();
+  const gpFilter = (filt.gp||'').toString().trim().toLowerCase();
+  const workFilter = (filt.work||'').toString().trim().toLowerCase();
+  const statusFilter = (filt.status||'').toString().trim().toLowerCase();
+  const yearFilter = (filt.year||'').toString().trim().toLowerCase();
+
+  return (rows||[]).filter(r => {
+    if (!Array.isArray(r)) return false;
+    const rr = r.map(x => x===null||x===undefined ? '' : (''+x).trim());
+
+    // category is expected at index 19 (20th col)
+    let rowCatRaw = rr[19] || '';
+    let rowCat = normalizeCategory(rowCatRaw);
+
+    if (catFilter) {
+      const wantCat = normalizeCategory(catFilter);
+      if (rowCat !== wantCat) return false;
+    }
+
+    if (engineerFilter) {
+      const val = (rr[1] || '').toLowerCase();
+      if (val.indexOf(engineerFilter) === -1) return false;
+    }
+    if (gpFilter) {
+      const val = (rr[2] || '').toLowerCase();
+      if (val.indexOf(gpFilter) === -1) return false;
+    }
+    if (workFilter) {
+      const val = ((rr[3] || '') + ' ' + (rr[4] || '')).toLowerCase();
+      if (val.indexOf(workFilter) === -1) return false;
+    }
+    if (statusFilter) {
+      const val = (rr[6] || '').toLowerCase();
+      if (val.indexOf(statusFilter) === -1) return false;
+    }
+    if (yearFilter) {
+      const val = (rr[5] || '').toLowerCase();
+      if (val.indexOf(yearFilter) === -1) return false;
+    }
+
+    if (searchFilter) {
+      const hay = rr.join(' ').toLowerCase();
+      if (hay.indexOf(searchFilter) === -1) return false;
+    }
+
+    return true;
+  });
+}
+
+/* fetch table (sanitized) with client-side fallback */
 async function fetchTable(filter, userid){
   try {
     if (!userid) { alert('Please login first'); return; }
 
     let filt = sanitizeFilter(filter || {});
-    // ensure category is normalized (dropdown stores normalized value too)
     if (filt.category) filt.category = normalizeCategory(filt.category);
 
     dbg('debugDash',{ sendingFilter: filt, userid: userid });
@@ -450,17 +502,19 @@ async function fetchTable(filter, userid){
       } catch(e){}
     }
 
-    // If backend returns rows but category values inside rows are not normalized,
-    // optional: normalize row category cell to uppercase for client-side checks.
-    // (We keep server-side filtering primary; this is a fallback if server ignored category.)
+    // Keep raw for display; normalize in matching step as needed
     rows = (rows||[]).map(r => {
       if (!Array.isArray(r)) return r;
       const rr = r.slice();
-      if (rr.length > 19) rr[19] = (rr[19]===undefined||rr[19]===null)?'': normalizeCategory(rr[19]);
+      // do not alter human-readable label in cell, but if needed we can stash normalized value somewhere
+      // (we'll rely on clientSideFilterRows to normalize when matching)
       return rr;
     });
 
-    renderTable(rows);
+    // apply client-side filter ALWAYS as fallback/guarantee
+    const clientFiltered = clientSideFilterRows(rows, filt);
+
+    renderTable(clientFiltered);
   } catch(err){ dbg('debugDash',{fetchTableError:String(err)}); }
 }
 
@@ -568,7 +622,7 @@ function wireControls(){
         dbg('debugCreate',{result:res});
         if (res && res.ok && res.result) {
           qs('statusCreate').innerText = 'Saved: ' + JSON.stringify(res.result);
-          await init(); 
+          await init();
         } else if (res && res.result) {
           qs('statusCreate').innerText = 'Saved: ' + JSON.stringify(res.result);
           await init();
