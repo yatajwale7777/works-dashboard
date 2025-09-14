@@ -1,27 +1,24 @@
-// app.js — final (category normalization + client-side fallback)
+// app.js — FINAL with working category filter (client-side fallback)
+
 // ====== Configuration: set your Apps Script URL here ======
 window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbz34Ak_pwJHdnVAvYsP9CiCQkd7EO50hDMySIy8a2O4OMt5ZAx7EtkKv4Anb-eYDQn90Q/exec";
 // ============================================================
 
 /* helpers */
 function qs(id){ return document.getElementById(id); }
-function dbg(id,obj){ try{ const el = qs(id); if (!el) { console.log(id, obj); return; } el.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj,null,2); } catch(e){ console.log(e); } }
+function dbg(id,obj){ try{ qs(id).textContent = typeof obj === 'string' ? obj : JSON.stringify(obj,null,2); } catch(e){ console.log(e); } }
 function escapeHtml(s){ return (''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function toNum(v){ if (v===null||v===undefined) return NaN; const s=(''+v).replace(/,/g,'').trim(); if(s==='') return NaN; const n=Number(s); return isNaN(n)?NaN:n; }
 function fmt(n){ if (n===''||n===null||n===undefined) return ''; if (isNaN(n)) return ''; if (Math.abs(n)>=1000) return Number(n).toLocaleString(); if (Math.abs(n - Math.round(n))>0 && Math.abs(n) < 1) return Number(n).toFixed(4); if (Math.abs(n - Math.round(n))>0) return Number(n).toFixed(4); return String(Math.round(n)); }
 function decodeHtml(s){ if (s === null || s === undefined) return s; return s.replace(/&quot;/g,'"').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#39;/g,"'"); }
 
-/* normalize category values so comparisons are consistent */
+/* normalize category */
 function normalizeCategory(s){ if (s === null || s === undefined) return ''; s = (''+s).trim(); s = s.replace(/\s+/g,' '); return s.toUpperCase(); }
 
 /* safe fetch helper */
-async function safeFetchJson(response){
-  const txt = await response.text();
-  try { return JSON.parse(txt); }
-  catch(e){ return { ok:false, error:'non-json-response', status: response.status, statusText: response.statusText, raw: txt }; }
-}
+async function safeFetchJson(response){ const txt = await response.text(); try { return JSON.parse(txt); } catch(e){ return { ok:false, error:'non-json-response', status: response.status, statusText: response.statusText, raw: txt }; } }
 
-/* JSONP helper fallback (if CORS blocks fetch) */
+/* JSONP helper fallback */
 function jsonpFetch(url, cbParam='callback', timeoutMs=8000){
   return new Promise((resolve, reject) => {
     const cbName = '__jsonp_cb_' + Math.random().toString(36).slice(2);
@@ -36,7 +33,7 @@ function jsonpFetch(url, cbParam='callback', timeoutMs=8000){
   });
 }
 
-/* network (GET/POST) - resilient to HTML/404 responses and with JSONP fallback */
+/* network */
 async function callApi(action, method='GET', payload=null){
   if (!window.APPSCRIPT_URL) return Promise.reject(new Error('APPSCRIPT_URL not set'));
 
@@ -68,7 +65,7 @@ async function callApi(action, method='GET', payload=null){
   }
 }
 
-/* sanitizeFilter - ensures expected keys exist and are strings; normalize category specifically */
+/* sanitizeFilter */
 function sanitizeFilter(input){
   const keys = ['engineer','gp','work','status','year','search','category'];
   const out = {};
@@ -78,31 +75,59 @@ function sanitizeFilter(input){
     if (v === null || v === undefined) { out[k] = ''; return; }
     if (typeof v === 'string') v = v.trim();
     else v = (''+v).trim();
-    if (k === 'category') v = normalizeCategory(v);
+    if (k==='category') v = normalizeCategory(v);
     out[k] = v;
   });
   return out;
 }
 
-/* helper: unique + clean small utility used for categories */
-function uniqClean(arr){
-  const seen = new Set();
-  const out = [];
-  (arr||[]).forEach(x=>{
-    if (x === null || x === undefined) return;
-    let s = (''+x).trim();
-    if (!s) return;
-    const low = s.toLowerCase();
-    if (low === 'total' || low === 'na' || low === 'n/a' || low === 'nan') return;
-    if (/^[\d\.\-\,\s]+$/.test(s)) return;
-    if (s.length <= 1) return;
-    s = s.replace(/\s+/g,' ').trim();
-    if (seen.has(s)) return;
-    seen.add(s);
-    out.push(s);
+/* uniqClean */
+function uniqClean(arr){ const seen = new Set(); const out = []; (arr||[]).forEach(x=>{ if (x === null || x === undefined) return; let s = (''+x).trim(); if (!s) return; const low = s.toLowerCase(); if (low === 'total' || low === 'na' || low === 'n/a' || low === 'nan') return; if (/^[\d\.\-\,\s]+$/.test(s)) return; if (s.length <= 1) return; s = s.replace(/\s+/g,' ').trim(); if (seen.has(s)) return; seen.add(s); out.push(s); }); out.sort(); return out; }
+
+/* populate */
+function populate(id, arr){ const sel = qs(id); if(!sel) return; const cur = sel.value; sel.innerHTML = '<option value="">--All--</option>'; (arr||[]).forEach(v=>{ if (v === null || v === undefined) return; const sv = (''+v).trim(); if (sv === '') return; const o = document.createElement('option'); o.value = sv; o.textContent = sv; sel.appendChild(o); }); try { if (cur) sel.value = cur; } catch(e){} }
+function populateCategory(id, arr){ const sel = qs(id); if(!sel) return; const cur = sel.value; sel.innerHTML = '<option value="">--All--</option>'; (arr||[]).forEach(v=>{ if (!v) return; const label = (''+v).trim(); if (!label) return; const o = document.createElement('option'); o.value = normalizeCategory(label); o.textContent = label; sel.appendChild(o); }); try { if (cur) sel.value = cur; } catch(e){} }
+
+/* client-side filter fallback */
+function clientSideFilterRows(rows, filt){
+  filt = filt || {};
+  const catFilter = (filt.category||'').toString().trim();
+  const searchFilter = (filt.search||'').toString().trim().toLowerCase();
+  const engineerFilter = (filt.engineer||'').toString().trim().toLowerCase();
+  const gpFilter = (filt.gp||'').toString().trim().toLowerCase();
+  const workFilter = (filt.work||'').toString().trim().toLowerCase();
+  const statusFilter = (filt.status||'').toString().trim().toLowerCase();
+  const yearFilter = (filt.year||'').toString().trim().toLowerCase();
+
+  return (rows||[]).filter(r=>{
+    if (!Array.isArray(r)) return false;
+    const rr = r.map(x=> x? (''+x).trim(): '');
+
+    if (catFilter){
+      const wantCat = normalizeCategory(catFilter);
+      const rowCat = normalizeCategory(rr[19]||'');
+      if (rowCat !== wantCat) return false;
+    }
+    if (engineerFilter){
+      if ((rr[1]||'').toLowerCase().indexOf(engineerFilter) === -1) return false;
+    }
+    if (gpFilter){
+      if ((rr[2]||'').toLowerCase().indexOf(gpFilter) === -1) return false;
+    }
+    if (workFilter){
+      if (((rr[3]||'') + ' ' + (rr[4]||'')).toLowerCase().indexOf(workFilter) === -1) return false;
+    }
+    if (statusFilter){
+      if ((rr[6]||'').toLowerCase().indexOf(statusFilter) === -1) return false;
+    }
+    if (yearFilter){
+      if ((rr[5]||'').toLowerCase().indexOf(yearFilter) === -1) return false;
+    }
+    if (searchFilter){
+      if (rr.join(' ').toLowerCase().indexOf(searchFilter)===-1) return false;
+    }
+    return true;
   });
-  out.sort();
-  return out;
 }
 
 /* ---------- RENDER TABLE (mapped to sheet columns) ---------- */
@@ -220,7 +245,7 @@ function renderTable(rows){
     });
 
     const payload = Object.assign({}, map);
-    html += '<tr data-payload=\'' + escapeHtml(JSON.stringify(payload)) + '\'>";
+    html += '<tr data-payload=\'' + escapeHtml(JSON.stringify(payload)) + '\'>';
     html += '<td>' + (ridx + 1) + '</td>';
     disp.forEach(cell => html += '<td>' + escapeHtml(cell) + '</td>');
     html += '</tr>';
@@ -387,7 +412,7 @@ if (qs('exportBtn')) qs('exportBtn').addEventListener('click', ()=> {
   const a = document.createElement('a'); a.href = url; a.download = 'works_dashboard.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 });
 
-/* safer populate - generic for selects */
+/* safer populate */
 function populate(id, arr){
   const sel = qs(id);
   if(!sel) return;
@@ -424,60 +449,9 @@ function populateCategory(id, arr){
 }
 
 /* client-side filter fallback: accepts rows (array of row-arrays) and filt (sanitized) */
-function clientSideFilterRows(rows, filt){
-  filt = filt || {};
-  const catFilter = (filt.category||'').toString().trim();
-  const searchFilter = (filt.search||'').toString().trim().toLowerCase();
-  const engineerFilter = (filt.engineer||'').toString().trim().toLowerCase();
-  const gpFilter = (filt.gp||'').toString().trim().toLowerCase();
-  const workFilter = (filt.work||'').toString().trim().toLowerCase();
-  const statusFilter = (filt.status||'').toString().trim().toLowerCase();
-  const yearFilter = (filt.year||'').toString().trim().toLowerCase();
+/* (already defined above as clientSideFilterRows) */
 
-  return (rows||[]).filter(r => {
-    if (!Array.isArray(r)) return false;
-    const rr = r.map(x => x===null||x===undefined ? '' : (''+x).trim());
-
-    // category is expected at index 19 (20th col)
-    let rowCatRaw = rr[19] || '';
-    let rowCat = normalizeCategory(rowCatRaw);
-
-    if (catFilter) {
-      const wantCat = normalizeCategory(catFilter);
-      if (rowCat !== wantCat) return false;
-    }
-
-    if (engineerFilter) {
-      const val = (rr[1] || '').toLowerCase();
-      if (val.indexOf(engineerFilter) === -1) return false;
-    }
-    if (gpFilter) {
-      const val = (rr[2] || '').toLowerCase();
-      if (val.indexOf(gpFilter) === -1) return false;
-    }
-    if (workFilter) {
-      const val = ((rr[3] || '') + ' ' + (rr[4] || '')).toLowerCase();
-      if (val.indexOf(workFilter) === -1) return false;
-    }
-    if (statusFilter) {
-      const val = (rr[6] || '').toLowerCase();
-      if (val.indexOf(statusFilter) === -1) return false;
-    }
-    if (yearFilter) {
-      const val = (rr[5] || '').toLowerCase();
-      if (val.indexOf(yearFilter) === -1) return false;
-    }
-
-    if (searchFilter) {
-      const hay = rr.join(' ').toLowerCase();
-      if (hay.indexOf(searchFilter) === -1) return false;
-    }
-
-    return true;
-  });
-}
-
-/* fetch table (sanitized) with client-side fallback */
+/* fetchTable (sanitized) with client-side fallback */
 async function fetchTable(filter, userid){
   try {
     if (!userid) { alert('Please login first'); return; }
