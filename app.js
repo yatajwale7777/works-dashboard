@@ -44,6 +44,7 @@ async function callApi(action, method='GET', payload=null){
       const resp = await fetch(u.toString(), { method:'GET', mode:'cors' });
       return await safeFetchJson(resp);
     } catch(err){
+      // try JSONP fallback
       try {
         const data = await jsonpFetch(u.toString(), 'callback');
         return data;
@@ -56,6 +57,7 @@ async function callApi(action, method='GET', payload=null){
       const resp = await fetch(window.APPSCRIPT_URL, { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8' }, body: params.toString(), mode:'cors' });
       return await safeFetchJson(resp);
     } catch(err){
+      // Try GET JSONP fallback for POST-like action (encode payload to query params)
       try {
         const u = new URL(window.APPSCRIPT_URL);
         u.searchParams.set('action', action);
@@ -67,7 +69,7 @@ async function callApi(action, method='GET', payload=null){
   }
 }
 
-/* sanitizeFilter - ensures expected keys exist and are strings */
+/* sanitize filter */
 function sanitizeFilter(input){
   const keys = ['engineer','gp','work','status','year','search','category'];
   const out = {};
@@ -82,9 +84,48 @@ function sanitizeFilter(input){
   return out;
 }
 
-/* ---------- (BEGIN) Render & modal code (copied from your file) ---------- */
-/* ... your renderTable, installRowClickHandlers, showModalDetail, modal export, export main table ... */
-/* (I am inserting your previously provided renderTable + modal code unchanged) */
+/* clean category list before populate */
+function cleanCategoryList(arr){
+  if (!Array.isArray(arr)) return [];
+  const seen = new Set();
+  const out = [];
+  for (let x of arr) {
+    if (x === null || x === undefined) continue;
+    let s = ('' + x).trim();
+    if (s === '') continue;
+    const low = s.toLowerCase();
+    if (low === 'total' || low === 'na' || low === 'n/a' || low === 'nan') continue;
+    if (/^[\d\.\-\,\s]+$/.test(s)) continue; // pure numeric junk
+    s = s.replace(/\s+/g,' ').trim();
+    if (seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  out.sort();
+  return out;
+}
+
+/* safer populate */
+function populate(id, arr){
+  const sel = qs(id);
+  if(!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">--All--</option>';
+  (arr||[]).forEach(v=>{
+    if (v === null || v === undefined) return;
+    const sv = (''+v).trim();
+    if (sv === '') return;
+    const o = document.createElement('option');
+    o.value = sv;
+    o.textContent = sv;
+    sel.appendChild(o);
+  });
+  try { if (cur) sel.value = cur; } catch(e){}
+}
+
+/* ---------- Render & modal code (same as your version) ---------- */
+/* For brevity reuse your renderTable + modal code from earlier — paste it here (unchanged). */
+/* --- BEGIN renderTable/modal (same as your code) --- */
 
 function renderTable(rows){
   const out = qs('output'); if (!out) return;
@@ -350,42 +391,7 @@ if (qs('modalExport')) qs('modalExport').addEventListener('click', function(){
   const a = document.createElement('a'); a.href = url; a.download = ((map['Name of work']||'work').toString().replace(/[^\w\-]/g,'_').slice(0,60)) + '_details.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 });
 
-if (qs('exportBtn')) qs('exportBtn').addEventListener('click', ()=> {
-  const table = qs('dataTable'); if (!table) return alert('No table to export');
-  const rows = Array.from(table.querySelectorAll('thead tr, tbody tr'));
-  const csv = rows.map(tr=>{
-    const cells = Array.from(tr.querySelectorAll('th,td')).map(td=>{
-      let txt = td.innerText.replace(/\r?\n/g,' ').trim();
-      if (txt.indexOf('"') !== -1) txt = txt.replace(/"/g,'""');
-      if (txt.indexOf(',') !== -1 || txt.indexOf('"')!==-1) return '"' + txt + '"';
-      return txt;
-    });
-    return cells.join(',');
-  }).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = 'works_dashboard.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-});
-
-/* ---------- (END) Render & modal code ---------- */
-
-/* safer populate */
-function populate(id, arr){
-  const sel = qs(id);
-  if(!sel) return;
-  const cur = sel.value;
-  sel.innerHTML = '<option value="">--All--</option>';
-  (arr||[]).forEach(v=>{
-    if (v === null || v === undefined) return;
-    const sv = (''+v).trim();
-    if (sv === '') return;
-    const o = document.createElement('option');
-    o.value = sv;
-    o.textContent = sv;
-    sel.appendChild(o);
-  });
-  try { if (cur) sel.value = cur; } catch(e){}
-}
+/* --- END render/modal --- */
 
 /* fetch table (sanitized) */
 async function fetchTable(filter, userid){
@@ -411,11 +417,11 @@ async function fetchTable(filter, userid){
     }
 
     renderTable(rows);
-  } catch(err){ dbg('debugDash',{fetchTableError:String(err)}); console.error(err); }
+  } catch(err){ dbg('debugDash',{fetchTableError:String(err)}); }
 }
 
-/* Login / Logout (simple) */
-if (qs('loginBtn')) qs('loginBtn').addEventListener('click', ()=>{ const v = (qs('loginInput')?qs('loginInput').value:'').trim(); if (!v) return alert('Enter UserID or Name'); doLogin(v); });
+/* Login / Logout */
+if (qs('loginBtn')) qs('loginBtn').addEventListener('click', ()=>{ const v = qs('loginInput').value.trim(); if (!v) return alert('Enter UserID or Name'); doLogin(v); });
 if (qs('logoutBtn')) qs('logoutBtn').addEventListener('click', ()=>{ if(qs('loginInput')) qs('loginInput').value=''; if(qs('userInfo')) qs('userInfo').innerText=''; if(qs('filtersCard')) qs('filtersCard').style.display='none'; if(qs('output')) qs('output').innerHTML=''; if(qs('logoutBtn')) qs('logoutBtn').style.display='none'; });
 
 async function doLogin(val){
@@ -440,74 +446,98 @@ async function doLogin(val){
     }
     if (qs('filtersCard')) qs('filtersCard').style.display = 'block';
     await fetchTable({}, u.userid);
-  } catch(err){ dbg('debugDash',{loginError:String(err)}); alert('Login error: '+String(err)); console.error(err); }
+  } catch(err){ dbg('debugDash',{loginError:String(err)}); alert('Login error: '+String(err)); }
 }
 
-/* UI controls wiring: apply / reset / create tab fallback */
+/* UI controls wiring */
 function wireControls(){
-  // apply button: try multiple selectors including filterBtn
-  let apply = qs('applyBtn') || qs('filterBtn') || document.querySelector('[data-action="applyFilter"]') || document.querySelector('#filterBtn');
+  // Apply: support filterBtn, applyBtn or data-action
+  let apply = qs('filterBtn') || qs('applyBtn') || document.querySelector('[data-action="applyFilter"]');
   if (apply) {
     apply.addEventListener('click', ()=> {
-      // collect filter values from selects/inputs (multiple fallbacks)
-      const searchEl = qs('search') || qs('searchInput') || document.querySelector('input[type="search"]') || document.querySelector('input[name="search"]');
       const filter = {
-        engineer: (qs('engineer')?qs('engineer').value:'') || '',
-        gp: (qs('gp')?qs('gp').value:'') || '',
-        work: (qs('work')?qs('work').value:'') || '',
-        status: (qs('status')?qs('status').value:'') || '',
-        year: (qs('year')?qs('year').value:'') || '',
-        category: (qs('category')?qs('category').value:'') || '',
-        search: (searchEl?searchEl.value:'') || ''
+        engineer: qs('engineer')?qs('engineer').value:'',
+        gp: qs('gp')?qs('gp').value:'',
+        work: qs('work')?qs('work').value:'',
+        status: qs('status')?qs('status').value:'',
+        year: qs('year')?qs('year').value:'',
+        category: qs('category')?qs('category').value:'',
+        search: qs('search')?qs('search').value:''
       };
-      console.log('Applying filter (fallback handler):', filter);
-      const userid = (qs('loginInput')?qs('loginInput').value.trim():'');
+      const userid = qs('loginInput')?qs('loginInput').value.trim():'';
       fetchTable(filter, userid);
     });
   } else {
-    console.warn('applyBtn not found — ensure button id="applyBtn" or data-action="applyFilter" or id="filterBtn" exists');
+    console.warn('applyBtn/filterBtn not found — ensure button id="filterBtn" or id="applyBtn" or data-action="applyFilter" exists');
   }
 
-  // reset button
-  let reset = qs('resetBtn') || document.querySelector('[data-action="resetFilters"]') || qs('filterReset') || document.querySelector('#resetBtn');
+  // Reset
+  let reset = qs('resetBtn') || document.querySelector('[data-action="resetFilters"]');
   if (reset) {
     reset.addEventListener('click', ()=>{
-      ['engineer','gp','work','status','year','category'].forEach(id=>{
+      ['engineer','gp','work','status','year','category','search'].forEach(id=>{
         const el = qs(id);
         if (!el) return;
         if (el.tagName === 'SELECT' || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') el.value = '';
       });
-      const searchEl = qs('search') || qs('searchInput') || document.querySelector('input[type="search"]') || document.querySelector('input[name="search"]');
-      if (searchEl) searchEl.value = '';
       const userid = qs('loginInput')?qs('loginInput').value.trim():'';
       if (userid) fetchTable({}, userid);
     });
-  } else {
-    console.warn('resetBtn not found — ensure button id="resetBtn" or data-action="resetFilters" exists');
   }
 
-  // create / open userid page tab control (multiple fallbacks)
-  let create = qs('createBtn') || document.querySelector('[data-action="openCreateUser"]') || qs('createUserBtn');
-  if (create) {
-    create.addEventListener('click', ()=>{
-      const tab = qs('tabCreate') || document.querySelector('[data-tab="create"]');
-      if (tab) {
-        try { tab.click(); }
-        catch(e){ tab.dispatchEvent(new Event('click')); }
-      } else {
-        const panel = qs('createUserPanel') || document.getElementById('createUser') || qs('createCard');
-        if (panel) panel.style.display = 'block';
-        else console.warn('Create user panel not found - ensure id="createUserPanel" or id="createUser" or id="createCard" exists');
-      }
+  // Tab buttons
+  const tabDashboard = qs('tabDashboard'), tabCreate = qs('tabCreate');
+  const panelDashboard = qs('panelDashboard'), panelCreate = qs('panelCreate');
+  if (tabDashboard && tabCreate && panelDashboard && panelCreate) {
+    tabDashboard.addEventListener('click', ()=> {
+      tabDashboard.classList.add('active'); tabCreate.classList.remove('active');
+      panelDashboard.style.display = 'block'; panelCreate.style.display = 'none';
+    });
+    tabCreate.addEventListener('click', ()=> {
+      tabCreate.classList.add('active'); tabDashboard.classList.remove('active');
+      panelCreate.style.display = 'block'; panelDashboard.style.display = 'none';
     });
   } else {
-    console.warn('create user button not found — ensure id="createBtn" or data-action="openCreateUser" exists');
+    console.warn('Tab elements not found or mismatched');
+  }
+
+  // Create / Save handler
+  const saveBtn = qs('btnSave');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', async ()=> {
+      const name = qs('c_name')?qs('c_name').value.trim():'';
+      const post = qs('c_post')?qs('c_post').value.trim():'';
+      const dcode = qs('c_dcode')?qs('c_dcode').value.trim():'77';
+      const pansEl = qs('c_panchayats');
+      let panchayats = [];
+      if (pansEl) {
+        panchayats = Array.from(pansEl.selectedOptions).map(o=>o.value).filter(Boolean);
+      }
+      if (!name || !post || !panchayats.length) {
+        qs('statusCreate').innerText = 'Name, Post and at least one Panchayat are required.';
+        return;
+      }
+      qs('statusCreate').innerText = 'Saving...';
+      try {
+        const payload = { name: name, post: post, dcode: dcode, panchayats: panchayats };
+        const res = await callApi('appendOrUpdateUser','POST', payload);
+        dbg('debugCreate', {res: res});
+        if (res && (res.ok || res.result || res.action || res.userid)) {
+          qs('statusCreate').innerText = 'Saved successfully.';
+          // refresh posts/panchayats/dropdowns by reloading dropdownData
+          try { await initDropdowns(); } catch(e){}
+        } else {
+          qs('statusCreate').innerText = 'Save response: ' + JSON.stringify(res);
+        }
+      } catch(e){ qs('statusCreate').innerText = 'Save error: ' + String(e); }
+    });
+  } else {
+    console.warn('Save button #btnSave not found');
   }
 }
 
-/* init */
-async function init(){
-  if (!window.APPSCRIPT_URL || window.APPSCRIPT_URL.trim() === '') { dbg('debugDash','Set window.APPSCRIPT_URL'); return; }
+/* load dropdowns separate (used in init and after saving new user) */
+async function initDropdowns(){
   try {
     const dd = await callApi('getDropdownData','GET');
     if (dd && dd.ok && dd.data) {
@@ -516,20 +546,51 @@ async function init(){
       populate('year', dt.years || []);
       populate('work', dt.works || []);
       populate('status', dt.status || []);
-      populate('category', dt.categories || []);
+      // clean categories before populate
+      populate('category', cleanCategoryList(dt.categories || []));
       populate('engineer', dt.engineers || []);
+      // populate create panchayats (multi-select)
+      const cPans = qs('c_panchayats');
+      if (cPans) {
+        cPans.innerHTML = '';
+        (dt.allPanchayats || []).forEach(p=>{ if (!p) return; const o=document.createElement('option'); o.value = p; o.textContent = p; cPans.appendChild(o); });
+      }
       window._gpsByEngineer = dt.gpsByEngineer || {};
-      dbg('debugDash',{dropdowns:dt});
-    } else dbg('debugDash',{error:dd});
-  } catch(err){ dbg('debugDash',{error:String(err)}); console.error(err); }
+    } else {
+      dbg('debugDash',{error:dd});
+    }
 
-  // wire UI buttons (apply/reset/create)
+    // posts (from userid sheet or fixed fallback)
+    try {
+      const postsRes = await callApi('getPostOptionsFromUserIdSheet','GET');
+      let posts = [];
+      if (Array.isArray(postsRes)) posts = postsRes;
+      else if (postsRes && postsRes.result && Array.isArray(postsRes.result)) posts = postsRes.result;
+      else if (postsRes && postsRes.data && Array.isArray(postsRes.data)) posts = postsRes.data;
+      else if (postsRes && postsRes.ok && postsRes.result) posts = postsRes.result;
+      // populate c_post
+      const c_post = qs('c_post');
+      if (c_post) {
+        c_post.innerHTML = '';
+        (posts||[]).forEach(p=>{ const o=document.createElement('option'); o.value = p; o.textContent = p; c_post.appendChild(o); });
+      }
+    } catch(e){
+      console.warn('post options load failed', e);
+    }
+
+  } catch(e){ dbg('debugDash',{error:String(e)}); }
+}
+
+/* init */
+async function init(){
+  if (!window.APPSCRIPT_URL || window.APPSCRIPT_URL.trim() === '') { dbg('debugDash','Set window.APPSCRIPT_URL'); return; }
+  await initDropdowns();
   wireControls();
 
   // if user already set in loginInput, try to fetch table
   const userid = qs('loginInput')?qs('loginInput').value.trim():'';
   if (userid) {
-    try { await fetchTable({}, userid); } catch(e){ dbg('debugDash',{error:String(e)}); console.error(e); }
+    try { await fetchTable({}, userid); } catch(e){ dbg('debugDash',{error:String(e)}); }
   }
 }
 
