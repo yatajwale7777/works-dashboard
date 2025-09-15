@@ -53,13 +53,15 @@ async function callApi(action, method='GET', payload=null){
       } catch(e){ return Promise.reject(e); }
     }
   } else {
+    // For POST, build form-encoded body from the payload (if object) --
+    // Important: older backend expects top-level fields (name, post, panchayats, etc.) not a single `payload` param.
     const params = new URLSearchParams(); params.set('action', action);
     if (payload && typeof payload === 'object') Object.keys(payload).forEach(k=>{ const v = payload[k]; params.set(k, typeof v === 'object' ? JSON.stringify(v) : String(v)); });
     try {
       const resp = await fetch(window.APPSCRIPT_URL, { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8' }, body: params.toString(), mode:'cors' });
       return await safeFetchJson(resp);
     } catch(err){
-      // Try GET JSONP fallback for POST-like action (encode payload to query params) only if safe
+      // Try GET JSONP fallback for POST-like action (encode payload to query params)
       try {
         const u = new URL(window.APPSCRIPT_URL);
         u.searchParams.set('action', action);
@@ -108,7 +110,6 @@ function uniqClean(arr){
 }
 
 /* ---------- RENDER TABLE (same as your original) ---------- */
-/* I copied your renderTable + modal code (unchanged) */
 function renderTable(rows){
   const out = qs('output'); if (!out) return;
   out.innerHTML = '';
@@ -520,41 +521,60 @@ function wireControls(){
     });
   }
 
-  // Save button on Create panel
+  // Save button on Create panel (UPDATED: send top-level fields to match your backend.gs)
   const saveBtn = qs('btnSave');
   if (saveBtn) {
     saveBtn.addEventListener('click', async ()=>{
+      const statusEl = qs('statusCreate') || null;
       const name = (qs('c_name')?qs('c_name').value.trim():'');
       const post = (qs('c_post')?qs('c_post').value.trim():'');
       const dcode = (qs('c_dcode')?qs('c_dcode').value.trim():'77');
+
       let panchayats = [];
       const sel = qs('c_panchayats');
       if (sel) {
-        Array.from(sel.selectedOptions||[]).forEach(o=>{ if (o && o.value) panchayats.push(o.value); });
+        if (sel.tagName === 'SELECT' && sel.multiple) {
+          Array.from(sel.selectedOptions||[]).forEach(o=>{ if (o && o.value) panchayats.push((''+o.value).trim()); });
+        } else if (sel.value) {
+          const raw = ('' + sel.value).trim();
+          panchayats = raw.split(/\s*,\s*/).map(x=>x.trim()).filter(Boolean);
+        }
       }
+
       dbg('debugCreate',{sending:{name:name,post:post,dcode:dcode,panchayats:panchayats}});
       if (!name || !post || !panchayats.length) {
-        qs('statusCreate').innerText = 'Please fill Name, Post and select at least one Panchayat.';
+        if (statusEl) statusEl.innerText = 'Please fill Name, Post and select at least one Panchayat.';
+        alert('Please fill Name, Post and select at least one Panchayat.');
         return;
       }
-      qs('statusCreate').innerText = 'Saving...';
-      try {
-        const payload = { name: name, post: post, dcode: dcode, panchayats: panchayats };
+      if (statusEl) statusEl.innerText = 'Saving...';
 
-        // MAIN change: send top-level fields (not nested under "payload") so Apps Script handlers that expect name/post/panchayats work.
+      // Build payload but send top-level (backend expects payload object parameter to appendOrUpdateUser, so we will call action with top-level fields)
+      const payload = { name: name, post: post, dcode: dcode, panchayats: panchayats };
+
+      try {
+        // IMPORTANT: send fields as top-level keys (not { payload: payload })
         const res = await callApi('appendOrUpdateUser','POST', payload);
         dbg('debugCreate',{result:res});
 
-        // If backend returns an obvious success shape, treat as success
-        if (res && (res.ok || res.result || res.user)) {
-          qs('statusCreate').innerText = 'Saved: ' + JSON.stringify(res.result || res.user || res);
-          try { await init(); } catch(e) { console.warn('init refresh failed', e); }
+        // backend returns object; check common shapes
+        if (res && (res.ok || res.result || res.action)) {
+          const msg = 'Saved: ' + JSON.stringify(res);
+          if (statusEl) statusEl.innerText = msg;
+          try { await init(); } catch(e){ console.warn('init refresh failed', e); }
           return;
         }
 
-        // If response didn't include expected fields, try direct POST with explicit top-level params (debugging fallback)
+        // fallback: try direct fetch with explicit form fields (good for debugging CORS/raw responses)
+      } catch(err){
+        dbg('debugCreate',{error:String(err)});
+        console.warn('callApi failed, will try direct fetch fallback', err);
+      }
+
+      // DIRECT FETCH fallback — send name/post/dcode and panchayats as JSON string param
+      try {
         const params = new URLSearchParams();
-        params.set('action','appendOrUpdateUser');
+        params.set('action', 'appendOrUpdateUser');
         params.set('name', payload.name);
         params.set('post', payload.post);
         params.set('dcode', payload.dcode);
@@ -569,23 +589,27 @@ function wireControls(){
 
         const rawText = await resp.text();
         let parsed = null;
-        try { parsed = JSON.parse(rawText); } catch(e) { /* not json */ }
+        try { parsed = JSON.parse(rawText); } catch(e){ /* might be non-json */ }
 
-        dbg('debugCreate', { directFetchStatus: resp.status, statusText: resp.statusText, rawText: rawText, parsed: parsed });
+        dbg('debugCreate',{directFetchStatus: resp.status, statusText: resp.statusText, rawText: rawText, parsed: parsed});
 
-        if (resp.ok && parsed && (parsed.ok || parsed.result || parsed.user)) {
-          qs('statusCreate').innerText = 'Saved (direct): ' + JSON.stringify(parsed.result || parsed.user || parsed);
-          try { await init(); } catch(e) { console.warn('init refresh failed', e); }
+        if (resp.ok && parsed && (parsed.ok || parsed.result || parsed.action)) {
+          const msg = 'Saved (directFetch): ' + JSON.stringify(parsed);
+          if (statusEl) statusEl.innerText = msg;
+          try { await init(); } catch(e){ console.warn('init refresh failed', e); }
           return;
         } else {
-          qs('statusCreate').innerText = 'Save response: ' + JSON.stringify(parsed || rawText);
-          return;
+          const msg = 'Save failed: HTTP ' + resp.status + ' — see debugCreate for raw response';
+          if (statusEl) statusEl.innerText = msg;
+          alert(msg + '\n\nOpen console/network tab for raw response.');
         }
 
-      } catch(err){
-        qs('statusCreate').innerText = 'Save error: ' + String(err);
-        dbg('debugCreate',{error:String(err)});
+      } catch(fetchErr) {
+        dbg('debugCreate',{error:'direct_fetch_failed', message: String(fetchErr)});
+        if (statusEl) statusEl.innerText = 'Direct fetch error: ' + String(fetchErr);
+        alert('Network or CORS error when saving. Check console and Network tab for details.');
       }
+
     });
   }
 }
@@ -608,7 +632,6 @@ async function init(){
       let catList = Array.isArray(dt.categories) ? uniqClean(dt.categories) : [];
       if (!catList || catList.length === 0) {
         try {
-          // get rows (unfiltered) and extract column index 19 (20th col)
           const rowsRes = await callApi('getFilteredData','POST',{ filter: {}, userid: '' });
           let rows = [];
           if (rowsRes && Array.isArray(rowsRes)) rows = rowsRes;
@@ -617,7 +640,6 @@ async function init(){
           else if (rowsRes && rowsRes.rows && Array.isArray(rowsRes.rows)) rows = rowsRes.rows;
           const rawCats = (rows||[]).map(r => {
             if (!Array.isArray(r)) return '';
-            // index 19 -> column 20
             return (r[19] === undefined || r[19] === null) ? '' : (''+r[19]).trim();
           });
           catList = uniqClean(rawCats);
