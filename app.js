@@ -807,4 +807,4 @@ async function init(){
   } else {
     document.addEventListener('DOMContentLoaded', function(){ try { init(); } catch(e){ console.error('init failed', e); dbg('debugDash', 'init failed: '+String(e)); } });
   }
-})();
+})();}
