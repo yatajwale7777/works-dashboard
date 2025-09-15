@@ -800,7 +800,7 @@ async function init(){
   window.addEventListener('error', function(ev){
     try { dbg('debugDash', { globalError: ev.message || ev.error || String(ev) }); } catch(e) { console.error(ev); }
   });
-  window.addEventListener('unhandledrejection', function(ev){ try { dbg('debugDash', { unhandledRejection: String(ev.reason) }); } catch(e) { console.error(ev); } });
+  window.addEventListener('unhandledrejection', function(ev){ try { dbg('debugDash', { unhandledRejection: String(ev.reason) }); } catch(e) { console.error(e); } });
 
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
     try { init(); } catch(e){ console.error('init failed', e); dbg('debugDash', 'init failed: '+String(e)); }
