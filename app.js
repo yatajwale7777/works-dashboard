@@ -540,18 +540,48 @@ function wireControls(){
       qs('statusCreate').innerText = 'Saving...';
       try {
         const payload = { name: name, post: post, dcode: dcode, panchayats: panchayats };
-        const res = await callApi('appendOrUpdateUser','POST',{ payload: payload });
+
+        // MAIN change: send top-level fields (not nested under "payload") so Apps Script handlers that expect name/post/panchayats work.
+        const res = await callApi('appendOrUpdateUser','POST', payload);
         dbg('debugCreate',{result:res});
-        if (res && res.ok && res.result) {
-          qs('statusCreate').innerText = 'Saved: ' + JSON.stringify(res.result);
-          // refresh dropdowns in case new user added
-          await init(); 
-        } else if (res && res.result) {
-          qs('statusCreate').innerText = 'Saved: ' + JSON.stringify(res.result);
-          await init();
-        } else {
-          qs('statusCreate').innerText = 'Save response: ' + JSON.stringify(res);
+
+        // If backend returns an obvious success shape, treat as success
+        if (res && (res.ok || res.result || res.user)) {
+          qs('statusCreate').innerText = 'Saved: ' + JSON.stringify(res.result || res.user || res);
+          try { await init(); } catch(e) { console.warn('init refresh failed', e); }
+          return;
         }
+
+        // If response didn't include expected fields, try direct POST with explicit top-level params (debugging fallback)
+        const params = new URLSearchParams();
+        params.set('action','appendOrUpdateUser');
+        params.set('name', payload.name);
+        params.set('post', payload.post);
+        params.set('dcode', payload.dcode);
+        params.set('panchayats', JSON.stringify(payload.panchayats));
+
+        const resp = await fetch(window.APPSCRIPT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+          body: params.toString(),
+          mode: 'cors'
+        });
+
+        const rawText = await resp.text();
+        let parsed = null;
+        try { parsed = JSON.parse(rawText); } catch(e) { /* not json */ }
+
+        dbg('debugCreate', { directFetchStatus: resp.status, statusText: resp.statusText, rawText: rawText, parsed: parsed });
+
+        if (resp.ok && parsed && (parsed.ok || parsed.result || parsed.user)) {
+          qs('statusCreate').innerText = 'Saved (direct): ' + JSON.stringify(parsed.result || parsed.user || parsed);
+          try { await init(); } catch(e) { console.warn('init refresh failed', e); }
+          return;
+        } else {
+          qs('statusCreate').innerText = 'Save response: ' + JSON.stringify(parsed || rawText);
+          return;
+        }
+
       } catch(err){
         qs('statusCreate').innerText = 'Save error: ' + String(err);
         dbg('debugCreate',{error:String(err)});
