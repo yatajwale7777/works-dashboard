@@ -1,12 +1,12 @@
-// app.js — updated
-// Changes: wrapped init in DOMContentLoaded, added global error handler, improved save handler (robust/debuggable), safer init fallbacks, and more defensive DOM selectors.
+// app.js — updated (complete)
+// Notes: defensive startup, timeout fallback for dropdown fetch, JSONP fallback for saves, robust debug output.
 
 // ====== Configuration: set your Apps Script URL here ======
 window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbz34Ak_pwJHdnVAvYsP9CiCQkd7EO50hDMySIy8a2O4OMt5ZAx7EtkKv4Anb-eYDQn90Q/exec";
 // ============================================================
 
 /* helpers */
-function qs(id){ try{ return document.getElementById(id); }catch(e){ return document.querySelector(id); } }
+function qs(id){ try{ return document.getElementById(id); }catch(e){ try { return document.querySelector(id); } catch(e){ return null; } } }
 function dbg(id,obj){ try{ const el = qs(id); if (el) el.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj,null,2); else console.log(id,obj); } catch(e){ console.log(e); } }
 function escapeHtml(s){ return (''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function decodeHtml(s){ if (s === null || s === undefined) return s; return s.replace(/&quot;/g,'"').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#39;/g,"'"); }
@@ -24,15 +24,20 @@ async function safeFetchJson(response){
 }
 
 /* JSONP helper fallback (if CORS blocks fetch) */
-function jsonpFetch(url, cbParam='callback', timeoutMs=8000){
+function jsonpFetch(url, cbParam='callback', timeoutMs=10000){
   return new Promise((resolve, reject) => {
     const cbName = '__jsonp_cb_' + Math.random().toString(36).slice(2);
-    window[cbName] = function(data){ resolve(data); cleanup(); };
+    let timedOut = false;
+    window[cbName] = function(data){
+      if (timedOut) return;
+      cleanup();
+      resolve(data);
+    };
     const script = document.createElement('script');
     const sep = url.indexOf('?') === -1 ? '?' : '&';
     script.src = url + sep + encodeURIComponent(cbParam) + '=' + cbName;
-    script.onerror = function(){ reject(new Error('JSONP script load error')); cleanup(); };
-    const to = setTimeout(()=>{ reject(new Error('JSONP timeout')); cleanup(); }, timeoutMs);
+    script.onerror = function(){ if (timedOut) return; cleanup(); reject(new Error('JSONP script load error')); };
+    const to = setTimeout(()=>{ timedOut = true; cleanup(); reject(new Error('JSONP timeout')); }, timeoutMs);
     function cleanup(){ clearTimeout(to); try{ delete window[cbName]; }catch(e){} script.remove(); }
     document.head.appendChild(script);
   });
@@ -50,25 +55,31 @@ async function callApi(action, method='GET', payload=null){
       const resp = await fetch(u.toString(), { method:'GET', mode:'cors' });
       return await safeFetchJson(resp);
     } catch(err){
+      // try jsonp fallback (some Apps Script endpoints support callback param)
       try {
-        const data = await jsonpFetch(u.toString(), 'callback');
+        const u2 = new URL(window.APPSCRIPT_URL);
+        u2.searchParams.set('action', action);
+        if (payload && typeof payload === 'object') Object.keys(payload).forEach(k=>u2.searchParams.set(k, typeof payload[k]==='string'? payload[k]: JSON.stringify(payload[k])));
+        const data = await jsonpFetch(u2.toString(), 'callback', 8000);
         return data;
-      } catch(e){ return Promise.reject(e); }
+      } catch(e){ return Promise.reject(err); }
     }
   } else {
+    // prefer POST; try fetch, then GET+jsonp fallback
     const params = new URLSearchParams(); params.set('action', action);
     if (payload && typeof payload === 'object') Object.keys(payload).forEach(k=>{ const v = payload[k]; params.set(k, typeof v === 'object' ? JSON.stringify(v) : String(v)); });
     try {
       const resp = await fetch(window.APPSCRIPT_URL, { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8' }, body: params.toString(), mode:'cors' });
       return await safeFetchJson(resp);
     } catch(err){
+      // POST failed (likely CORS). Try GET/jsonp fallback passing payload as query param 'payload'
       try {
         const u = new URL(window.APPSCRIPT_URL);
         u.searchParams.set('action', action);
-        if (payload && typeof payload === 'object') Object.keys(payload).forEach(k=>u.searchParams.set(k, typeof payload[k]==='string'? payload[k]: JSON.stringify(payload[k])));
-        const data = await jsonpFetch(u.toString(), 'callback');
+        if (payload && typeof payload === 'object') u.searchParams.set('payload', JSON.stringify(payload));
+        const data = await jsonpFetch(u.toString(), 'callback', 10000);
         return data;
-      } catch(e){ return Promise.reject(e); }
+      } catch(e){ return Promise.reject(err); }
     }
   }
 }
@@ -516,7 +527,7 @@ async function fetchTable(filter, userid){
 }
 
 /* Login / Logout (simple) */
-if (qs('loginBtn')) qs('loginBtn').addEventListener('click', ()=>{ const v = qs('loginInput').value.trim(); if (!v) return alert('Enter UserID or Name'); doLogin(v); });
+if (qs('loginBtn')) qs('loginBtn').addEventListener('click', ()=>{ const v = (qs('loginInput')&&qs('loginInput').value)?qs('loginInput').value.trim():''; if (!v) return alert('Enter UserID or Name'); doLogin(v); });
 if (qs('logoutBtn')) qs('logoutBtn').addEventListener('click', ()=>{ if(qs('loginInput')) qs('loginInput').value=''; if(qs('userInfo')) qs('userInfo').innerText=''; if(qs('filtersCard')) qs('filtersCard').style.display='none'; if(qs('output')) qs('output').innerHTML=''; if(qs('logoutBtn')) qs('logoutBtn').style.display='none'; });
 
 async function doLogin(val){
@@ -644,7 +655,7 @@ function wireControls(){
       dbg('debugCreate', { sending: payload });
       if (statusEl) statusEl.innerText = 'Saving...';
 
-      // Try high-level callApi first
+      // Try high-level callApi first (it contains fetch/post + jsonp fallback)
       try {
         const res = await callApi('appendOrUpdateUser','POST',{ payload: payload });
         dbg('debugCreate', { callApiResult: res });
@@ -656,17 +667,17 @@ function wireControls(){
           return;
         }
 
-        const msg = 'Unexpected save response (will try direct fetch). See console.';
-        if (statusEl) statusEl.innerText = msg;
-        console.warn('appendOrUpdateUser unexpected shape', res);
+        // Unexpected shape; fall through to raw direct fetch + jsonp fallback below
+        console.warn('appendOrUpdateUser unexpected shape (will try direct fetch/jsonp):', res);
+        if (statusEl) statusEl.innerText = 'Unexpected response — trying fallback save...';
 
       } catch(callErr) {
         console.warn('callApi appendOrUpdateUser failed:', callErr);
         dbg('debugCreate', { error: 'callApi_failed', message: String(callErr) });
-        if (statusEl) statusEl.innerText = 'Save via callApi failed — trying direct fetch (see console).';
+        if (statusEl) statusEl.innerText = 'Save via callApi failed — trying direct fetch/jsonp...';
       }
 
-      // DIRECT FETCH fallback (shows raw text for debugging CORS/back-end shape)
+      // DIRECT FETCH fallback
       try {
         const params = new URLSearchParams();
         params.set('action', 'appendOrUpdateUser');
@@ -684,7 +695,7 @@ function wireControls(){
         let parsed = null;
         try { parsed = JSON.parse(rawText); } catch(e) { /* not json */ }
 
-        dbg('debugCreate', { directFetchStatus: resp.status, statusText: resp.statusText, rawText: rawText, parsed: parsed });
+        dbg('debugCreate', { directFetchStatus: resp.status, statusText: resp.statusText, rawText: rawText && rawText.slice? rawText.slice(0,4000) : rawText, parsed: parsed });
 
         if (resp.ok && parsed && (parsed.ok || parsed.result || parsed.user)) {
           const msg = 'Saved (directFetch): ' + (parsed.result ? JSON.stringify(parsed.result) : JSON.stringify(parsed));
@@ -692,16 +703,40 @@ function wireControls(){
           try { await init(); } catch(e){ console.warn('init refresh failed', e); }
           return;
         } else {
-          const msg = 'Save failed: HTTP ' + resp.status + ' — see debugCreate for raw response';
-          if (statusEl) statusEl.innerText = msg;
-          alert(msg + '\n\nOpen console/network tab for raw response.');
+          console.warn('Direct fetch returned unexpected body:', rawText);
+          // Fall through to JSONP fallback
         }
 
       } catch(fetchErr) {
-        console.error('Direct fetch error:', fetchErr);
+        console.warn('Direct fetch error:', fetchErr);
         dbg('debugCreate', { error: 'direct_fetch_failed', message: String(fetchErr) });
-        if (statusEl) statusEl.innerText = 'Direct fetch error: ' + String(fetchErr);
-        alert('Network or CORS error when saving. Check console and Network tab for details.');
+        // Fall through to JSONP fallback
+      }
+
+      // JSONP fallback for save (only works if Apps Script wraps result in callback when callback param present)
+      try {
+        const u = new URL(window.APPSCRIPT_URL);
+        u.searchParams.set('action','appendOrUpdateUser');
+        u.searchParams.set('payload', JSON.stringify(payload));
+        const jsonpRes = await jsonpFetch(u.toString(), 'callback', 10000);
+        dbg('debugCreate', { jsonpFallbackResult: jsonpRes });
+        if (jsonpRes && (jsonpRes.ok || jsonpRes.result || jsonpRes.user)) {
+          const msg = 'Saved (jsonpFallback): ' + (jsonpRes.result ? JSON.stringify(jsonpRes.result) : JSON.stringify(jsonpRes));
+          if (statusEl) statusEl.innerText = msg;
+          try { await init(); } catch(e){ console.warn('init refresh failed', e); }
+          return;
+        } else {
+          const msg = 'Save failed (all attempts). See debugCreate for raw responses.';
+          if (statusEl) statusEl.innerText = msg;
+          alert(msg);
+          return;
+        }
+      } catch(jsonpErr) {
+        console.error('JSONP fallback for save failed:', jsonpErr);
+        dbg('debugCreate', { error: 'jsonp_save_failed', message: String(jsonpErr) });
+        if (statusEl) statusEl.innerText = 'Save completely failed: ' + String(jsonpErr);
+        alert('Save failed (network/CORS). Open console for details.');
+        return;
       }
     });
   })();
@@ -710,8 +745,39 @@ function wireControls(){
 /* initDropdowns + main init */
 async function init(){
   if (!window.APPSCRIPT_URL || window.APPSCRIPT_URL.trim() === '') { dbg('debugDash','Set window.APPSCRIPT_URL'); return; }
+
+  // Helper: fetch dropdowns but timeout quickly and provide local fallback
+  async function fetchDropdownDataWithTimeout(timeoutMs = 5000) {
+    try {
+      // Race callApi GET with timeout
+      const p = callApi('getDropdownData','GET');
+      const dd = await Promise.race([
+        p,
+        new Promise((_, rej) => setTimeout(()=> rej(new Error('timeout')), timeoutMs))
+      ]);
+      return dd;
+    } catch(err) {
+      console.warn('Dropdown fetch failed or timed out:', err);
+      // FALLBACK defaults (small set to make UI usable)
+      return {
+        ok: true,
+        data: {
+          updateTime: '',
+          years: ['2025','2024','2023'],
+          works: ['All Works'],
+          status: ['Planned','In Progress','Completed'],
+          engineers: ['--'],
+          gpsByEngineer: {},
+          categories: ['GENERAL'],
+          allPanchayats: ['Panchayat A','Panchayat B'],
+          posts: ['Engg','GRS','AE','Other']
+        }
+      };
+    }
+  }
+
   try {
-    const dd = await callApi('getDropdownData','GET');
+    const dd = await fetchDropdownDataWithTimeout(5000);
     if (dd && dd.ok && dd.data) {
       const dt = dd.data;
       if (qs('lastUpdate')) qs('lastUpdate').innerText = 'Last Update: ' + (dt.updateTime || '');
@@ -721,6 +787,7 @@ async function init(){
       populateSimple('engineer', dt.engineers || []);
       window._gpsByEngineer = dt.gpsByEngineer || {};
 
+      // Category: prefer dt.categories; if empty -> fallback to column 20 (index 19) extracted from rows
       let catList = Array.isArray(dt.categories) ? uniqClean(dt.categories) : [];
       if (!catList || catList.length === 0) {
         try {
@@ -739,6 +806,7 @@ async function init(){
       }
       populateCategory('category', catList || []);
 
+      // populate create-panel panchayats (multi-select)
       const cPans = qs('c_panchayats');
       if (cPans) {
         cPans.innerHTML = '';
@@ -749,6 +817,7 @@ async function init(){
         });
       }
 
+      // populate posts for create panel
       try {
         let postsRes = await callApi('getPostOptionsFromUserIdSheet','GET');
         let posts = [];
