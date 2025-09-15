@@ -4,17 +4,40 @@ window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbz34Ak_pwJHdnVAv
 
 /* helpers */
 function qs(id){ return document.getElementById(id); }
-function dbg(id,obj){ try{ qs(id).textContent = typeof obj === 'string' ? obj : JSON.stringify(obj,null,2); } catch(e){ console.log(e); } }
+function dbg(id,obj){ try{ const el = qs(id); if(el) el.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj,null,2); else console.log(id,obj); } catch(e){ console.log(e); } }
 function escapeHtml(s){ return (''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function toNum(v){ if (v===null||v===undefined) return NaN; const s=(''+v).replace(/,/g,'').trim(); if(s==='') return NaN; const n=Number(s); return isNaN(n)?NaN:n; }
 function fmt(n){ if (n===''||n===null||n===undefined) return ''; if (isNaN(n)) return ''; if (Math.abs(n)>=1000) return Number(n).toLocaleString(); if (Math.abs(n - Math.round(n))>0 && Math.abs(n) < 1) return Number(n).toFixed(4); if (Math.abs(n - Math.round(n))>0) return Number(n).toFixed(4); return String(Math.round(n)); }
 function decodeHtml(s){ if (s === null || s === undefined) return s; return s.replace(/&quot;/g,'"').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#39;/g,"'"); }
 
+/* small sleep util */
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+/* fetch with exponential retry */
+async function fetchWithRetry(input, init = {}, attempts = 3, baseMs = 250) {
+  let lastErr = null;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fetch(input, init);
+    } catch (err) {
+      lastErr = err;
+      if (i < attempts - 1) await sleep(baseMs * Math.pow(2, i));
+    }
+  }
+  throw lastErr;
+}
+
 /* safe fetch helper */
 async function safeFetchJson(response){
+  // if non-2xx response we still attempt to return JSON (if present) or an error object
   const txt = await response.text();
-  try { return JSON.parse(txt); }
-  catch(e){ return { ok:false, error:'non-json-response', status: response.status, statusText: response.statusText, raw: txt }; }
+  try { 
+    const parsed = JSON.parse(txt);
+    return parsed;
+  }
+  catch(e){ 
+    return { ok:false, error:'non-json-response', status: response.status, statusText: response.statusText, raw: txt }; 
+  }
 }
 
 /* JSONP helper fallback (if CORS blocks fetch) */
@@ -22,13 +45,23 @@ async function safeFetchJson(response){
 function jsonpFetch(url, cbParam='callback', timeoutMs=8000){
   return new Promise((resolve, reject) => {
     const cbName = '__jsonp_cb_' + Math.random().toString(36).slice(2);
-    window[cbName] = function(data){ resolve(data); cleanup(); };
+    // attach once
+    window[cbName] = function(data){
+      try { resolve(data); } catch(e){ reject(e); }
+      cleanup();
+    };
     const script = document.createElement('script');
     const sep = url.indexOf('?') === -1 ? '?' : '&';
+    // append cb param with our unique cbName
     script.src = url + sep + encodeURIComponent(cbParam) + '=' + cbName;
-    script.onerror = function(){ reject(new Error('JSONP script load error')); cleanup(); };
+    script.async = true;
+    const onError = function(){
+      reject(new Error('JSONP script load error: ' + script.src));
+      cleanup();
+    };
+    script.onerror = onError;
     const to = setTimeout(()=>{ reject(new Error('JSONP timeout')); cleanup(); }, timeoutMs);
-    function cleanup(){ clearTimeout(to); try{ delete window[cbName]; }catch(e){} script.remove(); }
+    function cleanup(){ clearTimeout(to); try{ delete window[cbName]; }catch(e){} script.onerror = null; script.remove(); }
     document.head.appendChild(script);
   });
 }
@@ -43,22 +76,28 @@ async function callApi(action, method='GET', payload=null){
     u.searchParams.set('action', action);
     if (payload && typeof payload === 'object') Object.keys(payload).forEach(k=>u.searchParams.set(k, typeof payload[k]==='string'? payload[k]: JSON.stringify(payload[k])));
     try {
-      const resp = await fetch(u.toString(), { method:'GET', mode:'cors' });
+      const resp = await fetchWithRetry(u.toString(), { method:'GET', mode:'cors' }, 3, 250);
       return await safeFetchJson(resp);
     } catch(err){
-      // try JSONP fallback
       try {
         const data = await jsonpFetch(u.toString(), 'callback');
         return data;
       } catch(e){ return Promise.reject(e); }
     }
   } else {
-    // For POST, build form-encoded body from the payload (if object) --
-    // Important: older backend expects top-level fields (name, post, panchayats, etc.) not a single `payload` param.
-    const params = new URLSearchParams(); params.set('action', action);
-    if (payload && typeof payload === 'object') Object.keys(payload).forEach(k=>{ const v = payload[k]; params.set(k, typeof v === 'object' ? JSON.stringify(v) : String(v)); });
+    // For POST, build form-encoded body from the payload
+    // IMPORTANT: We send top-level keys (name, post, panchayats, etc.) — this matches your backend wrapper expectations.
+    const params = new URLSearchParams();
+    params.set('action', action);
+    if (payload && typeof payload === 'object') {
+      Object.keys(payload).forEach(k=>{
+        const v = payload[k];
+        // arrays -> JSON string (server will parse)
+        params.set(k, (Array.isArray(v) || typeof v === 'object') ? JSON.stringify(v) : String(v));
+      });
+    }
     try {
-      const resp = await fetch(window.APPSCRIPT_URL, { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8' }, body: params.toString(), mode:'cors' });
+      const resp = await fetchWithRetry(window.APPSCRIPT_URL, { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8' }, body: params.toString(), mode:'cors' }, 3, 300);
       return await safeFetchJson(resp);
     } catch(err){
       // Try GET JSONP fallback for POST-like action (encode payload to query params)
@@ -345,6 +384,7 @@ function closeModal(){ if(modalOverlay){ modalOverlay.style.display = 'none'; do
 if (qs('modalClose')) qs('modalClose').addEventListener('click', closeModal);
 if (modalOverlay) modalOverlay.addEventListener('click', function(e){ if (e.target === modalOverlay) closeModal(); });
 
+/* modal export & table export (unchanged) */
 if (qs('modalExport')) qs('modalExport').addEventListener('click', function(){
   const map = currentModalData; if (!map) return alert('No data');
   const planned = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'].map(k=> toNum(map[k]));
@@ -549,7 +589,7 @@ function wireControls(){
       }
       if (statusEl) statusEl.innerText = 'Saving...';
 
-      // Build payload but send top-level (backend expects payload object parameter to appendOrUpdateUser, so we will call action with top-level fields)
+      // Build payload but send top-level (backend expects top-level keys)
       const payload = { name: name, post: post, dcode: dcode, panchayats: panchayats };
 
       try {
@@ -565,7 +605,6 @@ function wireControls(){
           return;
         }
 
-        // fallback: try direct fetch with explicit form fields (good for debugging CORS/raw responses)
       } catch(err){
         dbg('debugCreate',{error:String(err)});
         console.warn('callApi failed, will try direct fetch fallback', err);
@@ -578,14 +617,16 @@ function wireControls(){
         params.set('name', payload.name);
         params.set('post', payload.post);
         params.set('dcode', payload.dcode);
+        // backend appendOrUpdateUser expects payload.panchayats as array if wrapper does that.
+        // Sending stringified array is safer for many wrappers.
         params.set('panchayats', JSON.stringify(payload.panchayats));
 
-        const resp = await fetch(window.APPSCRIPT_URL, {
+        const resp = await fetchWithRetry(window.APPSCRIPT_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
           body: params.toString(),
           mode: 'cors'
-        });
+        }, 3, 300);
 
         const rawText = await resp.text();
         let parsed = null;
