@@ -1,12 +1,10 @@
-// app.js — updated from your backup (resilient network + jsonp/save fallback)
-
 // ====== Configuration: set your Apps Script URL here ======
 window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbz34Ak_pwJHdnVAvYsP9CiCQkd7EO50hDMySIy8a2O4OMt5ZAx7EtkKv4Anb-eYDQn90Q/exec";
 // ============================================================
 
 /* helpers */
-function qs(id){ try{ return document.getElementById(id); }catch(e){ try{return document.querySelector(id);}catch(e){return null;} } }
-function dbg(id,obj){ try{ const el = qs(id); if (el) el.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj,null,2); else console.log(id,obj); } catch(e){ console.log(e); } }
+function qs(id){ return document.getElementById(id); }
+function dbg(id,obj){ try{ qs(id).textContent = typeof obj === 'string' ? obj : JSON.stringify(obj,null,2); } catch(e){ console.log(e); } }
 function escapeHtml(s){ return (''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function toNum(v){ if (v===null||v===undefined) return NaN; const s=(''+v).replace(/,/g,'').trim(); if(s==='') return NaN; const n=Number(s); return isNaN(n)?NaN:n; }
 function fmt(n){ if (n===''||n===null||n===undefined) return ''; if (isNaN(n)) return ''; if (Math.abs(n)>=1000) return Number(n).toLocaleString(); if (Math.abs(n - Math.round(n))>0 && Math.abs(n) < 1) return Number(n).toFixed(4); if (Math.abs(n - Math.round(n))>0) return Number(n).toFixed(4); return String(Math.round(n)); }
@@ -20,16 +18,16 @@ async function safeFetchJson(response){
 }
 
 /* JSONP helper fallback (if CORS blocks fetch) */
+/* returns a Promise that resolves with parsed JSON */
 function jsonpFetch(url, cbParam='callback', timeoutMs=8000){
   return new Promise((resolve, reject) => {
     const cbName = '__jsonp_cb_' + Math.random().toString(36).slice(2);
-    let timedOut = false;
-    window[cbName] = function(data){ if (timedOut) return; cleanup(); resolve(data); };
+    window[cbName] = function(data){ resolve(data); cleanup(); };
     const script = document.createElement('script');
     const sep = url.indexOf('?') === -1 ? '?' : '&';
     script.src = url + sep + encodeURIComponent(cbParam) + '=' + cbName;
-    script.onerror = function(){ if (timedOut) return; cleanup(); reject(new Error('JSONP script load error')); };
-    const to = setTimeout(()=>{ timedOut = true; cleanup(); reject(new Error('JSONP timeout')); }, timeoutMs);
+    script.onerror = function(){ reject(new Error('JSONP script load error')); cleanup(); };
+    const to = setTimeout(()=>{ reject(new Error('JSONP timeout')); cleanup(); }, timeoutMs);
     function cleanup(){ clearTimeout(to); try{ delete window[cbName]; }catch(e){} script.remove(); }
     document.head.appendChild(script);
   });
@@ -39,6 +37,7 @@ function jsonpFetch(url, cbParam='callback', timeoutMs=8000){
 async function callApi(action, method='GET', payload=null){
   if (!window.APPSCRIPT_URL) return Promise.reject(new Error('APPSCRIPT_URL not set'));
 
+  // prefer fetch; if CORS fails, try JSONP (if backend supports callback param)
   if (method === 'GET') {
     const u = new URL(window.APPSCRIPT_URL);
     u.searchParams.set('action', action);
@@ -47,10 +46,11 @@ async function callApi(action, method='GET', payload=null){
       const resp = await fetch(u.toString(), { method:'GET', mode:'cors' });
       return await safeFetchJson(resp);
     } catch(err){
+      // try JSONP fallback
       try {
         const data = await jsonpFetch(u.toString(), 'callback');
         return data;
-      } catch(e){ return Promise.reject(err); }
+      } catch(e){ return Promise.reject(e); }
     }
   } else {
     const params = new URLSearchParams(); params.set('action', action);
@@ -59,14 +59,14 @@ async function callApi(action, method='GET', payload=null){
       const resp = await fetch(window.APPSCRIPT_URL, { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8' }, body: params.toString(), mode:'cors' });
       return await safeFetchJson(resp);
     } catch(err){
-      // fallback to GET+jsonp (encode payload into query)
+      // Try GET JSONP fallback for POST-like action (encode payload to query params) only if safe
       try {
         const u = new URL(window.APPSCRIPT_URL);
         u.searchParams.set('action', action);
-        if (payload && typeof payload === 'object') u.searchParams.set('payload', JSON.stringify(payload));
+        if (payload && typeof payload === 'object') Object.keys(payload).forEach(k=>u.searchParams.set(k, typeof payload[k]==='string'? payload[k]: JSON.stringify(payload[k])));
         const data = await jsonpFetch(u.toString(), 'callback');
         return data;
-      } catch(e){ return Promise.reject(err); }
+      } catch(e){ return Promise.reject(e); }
     }
   }
 }
@@ -107,7 +107,8 @@ function uniqClean(arr){
   return out;
 }
 
-/* ---------- RENDER TABLE & MODAL (untouched core logic) ---------- */
+/* ---------- RENDER TABLE (same as your original) ---------- */
+/* I copied your renderTable + modal code (unchanged) */
 function renderTable(rows){
   const out = qs('output'); if (!out) return;
   out.innerHTML = '';
@@ -250,7 +251,6 @@ function installRowClickHandlers(){
   });
 }
 
-/* Modal logic (unchanged) */
 const modalOverlay = qs('modalOverlay'), modalTitle = qs('modalTitle'), modalMeta = qs('modalMeta'), modalBody = qs('modalBody');
 let currentModalData = null;
 
@@ -344,7 +344,6 @@ function closeModal(){ if(modalOverlay){ modalOverlay.style.display = 'none'; do
 if (qs('modalClose')) qs('modalClose').addEventListener('click', closeModal);
 if (modalOverlay) modalOverlay.addEventListener('click', function(e){ if (e.target === modalOverlay) closeModal(); });
 
-/* export modal CSV */
 if (qs('modalExport')) qs('modalExport').addEventListener('click', function(){
   const map = currentModalData; if (!map) return alert('No data');
   const planned = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'].map(k=> toNum(map[k]));
@@ -374,7 +373,6 @@ if (qs('modalExport')) qs('modalExport').addEventListener('click', function(){
   const a = document.createElement('a'); a.href = url; a.download = ((map['Name of work']||'work').toString().replace(/[^\w\-]/g,'_').slice(0,60)) + '_details.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 });
 
-/* export whole table */
 if (qs('exportBtn')) qs('exportBtn').addEventListener('click', ()=> {
   const table = qs('dataTable'); if (!table) return alert('No table to export');
   const rows = Array.from(table.querySelectorAll('thead tr, tbody tr'));
@@ -392,7 +390,7 @@ if (qs('exportBtn')) qs('exportBtn').addEventListener('click', ()=> {
   const a = document.createElement('a'); a.href = url; a.download = 'works_dashboard.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 });
 
-/* safer populate (single implementation) */
+/* safer populate */
 function populate(id, arr){
   const sel = qs(id);
   if(!sel) return;
@@ -438,7 +436,7 @@ async function fetchTable(filter, userid){
 }
 
 /* Login / Logout (simple) */
-if (qs('loginBtn')) qs('loginBtn').addEventListener('click', ()=>{ const v = (qs('loginInput')&&qs('loginInput').value)?qs('loginInput').value.trim():''; if (!v) return alert('Enter UserID or Name'); doLogin(v); });
+if (qs('loginBtn')) qs('loginBtn').addEventListener('click', ()=>{ const v = qs('loginInput').value.trim(); if (!v) return alert('Enter UserID or Name'); doLogin(v); });
 if (qs('logoutBtn')) qs('logoutBtn').addEventListener('click', ()=>{ if(qs('loginInput')) qs('loginInput').value=''; if(qs('userInfo')) qs('userInfo').innerText=''; if(qs('filtersCard')) qs('filtersCard').style.display='none'; if(qs('output')) qs('output').innerHTML=''; if(qs('logoutBtn')) qs('logoutBtn').style.display='none'; });
 
 async function doLogin(val){
@@ -522,7 +520,7 @@ function wireControls(){
     });
   }
 
-  // Save button on Create panel (robust + debug)
+  // Save button on Create panel
   const saveBtn = qs('btnSave');
   if (saveBtn) {
     saveBtn.addEventListener('click', async ()=>{
@@ -532,79 +530,31 @@ function wireControls(){
       let panchayats = [];
       const sel = qs('c_panchayats');
       if (sel) {
-        if (sel.selectedOptions && sel.selectedOptions.length) {
-          Array.from(sel.selectedOptions||[]).forEach(o=>{ if (o && o.value) panchayats.push(o.value); });
-        } else if (sel.value) {
-          panchayats = (''+sel.value).split(/\s*,\s*/).map(x=>x.trim()).filter(Boolean);
-        }
+        Array.from(sel.selectedOptions||[]).forEach(o=>{ if (o && o.value) panchayats.push(o.value); });
       }
-      const statusEl = qs('statusCreate');
       dbg('debugCreate',{sending:{name:name,post:post,dcode:dcode,panchayats:panchayats}});
       if (!name || !post || !panchayats.length) {
-        if (statusEl) statusEl.innerText = 'Please fill Name, Post and select at least one Panchayat.';
-        alert('Please fill Name, Post and select at least one Panchayat.');
+        qs('statusCreate').innerText = 'Please fill Name, Post and select at least one Panchayat.';
         return;
       }
-      if (statusEl) statusEl.innerText = 'Saving...';
-
-      const payload = { name: name, post: post, dcode: dcode, panchayats: panchayats };
-
-      // Try callApi (POST with jsonp fallback)
+      qs('statusCreate').innerText = 'Saving...';
       try {
+        const payload = { name: name, post: post, dcode: dcode, panchayats: panchayats };
         const res = await callApi('appendOrUpdateUser','POST',{ payload: payload });
         dbg('debugCreate',{result:res});
-        if (res && (res.ok || res.result || res.user)) {
-          const msg = 'Saved: ' + (res.result ? JSON.stringify(res.result) : (res.user ? JSON.stringify(res.user) : JSON.stringify(res)));
-          if (statusEl) statusEl.innerText = msg;
-          try { await init(); } catch(e){ console.warn('init refresh failed', e); }
-          return;
-        }
-        // Unexpected shape — continue to direct fetch
-        console.warn('appendOrUpdateUser unexpected shape', res);
-      } catch(e){
-        console.warn('callApi save failed', e);
-      }
-
-      // Direct POST fallback for debugging
-      try {
-        const params = new URLSearchParams();
-        params.set('action','appendOrUpdateUser');
-        params.set('payload', JSON.stringify(payload));
-        const resp = await fetch(window.APPSCRIPT_URL, { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8' }, body: params.toString(), mode:'cors' });
-        const raw = await resp.text();
-        let parsed = null;
-        try { parsed = JSON.parse(raw); } catch(err){}
-        dbg('debugCreate',{directFetchStatus:resp.status, raw: raw && raw.slice? raw.slice(0,3000): raw, parsed: parsed});
-        if (resp.ok && parsed && (parsed.ok || parsed.result || parsed.user)) {
-          if (statusEl) statusEl.innerText = 'Saved (direct): ' + JSON.stringify(parsed);
-          try { await init(); } catch(e){ console.warn('init refresh failed', e); }
-          return;
-        }
-      } catch(err){
-        console.warn('direct fetch save failed', err);
-      }
-
-      // JSONP fallback (last resort)
-      try {
-        const u = new URL(window.APPSCRIPT_URL);
-        u.searchParams.set('action','appendOrUpdateUser');
-        u.searchParams.set('payload', JSON.stringify(payload));
-        const jsonpRes = await jsonpFetch(u.toString(), 'callback', 10000);
-        dbg('debugCreate',{jsonpRes: jsonpRes});
-        if (jsonpRes && (jsonpRes.ok || jsonpRes.result || jsonpRes.user)) {
-          if (statusEl) statusEl.innerText = 'Saved (jsonp): ' + JSON.stringify(jsonpRes);
-          try { await init(); } catch(e){ console.warn('init refresh failed', e); }
-          return;
+        if (res && res.ok && res.result) {
+          qs('statusCreate').innerText = 'Saved: ' + JSON.stringify(res.result);
+          // refresh dropdowns in case new user added
+          await init(); 
+        } else if (res && res.result) {
+          qs('statusCreate').innerText = 'Saved: ' + JSON.stringify(res.result);
+          await init();
         } else {
-          if (statusEl) statusEl.innerText = 'Save failed (see debug).';
-          alert('Save failed — check debugCreate output and network tab.');
-          return;
+          qs('statusCreate').innerText = 'Save response: ' + JSON.stringify(res);
         }
       } catch(err){
-        console.error('JSONP save fallback failed', err);
+        qs('statusCreate').innerText = 'Save error: ' + String(err);
         dbg('debugCreate',{error:String(err)});
-        if (statusEl) statusEl.innerText = 'Save failed completely: ' + String(err);
-        alert('Save failed — open console for details.');
       }
     });
   }
@@ -613,26 +563,8 @@ function wireControls(){
 /* initDropdowns + main init */
 async function init(){
   if (!window.APPSCRIPT_URL || window.APPSCRIPT_URL.trim() === '') { dbg('debugDash','Set window.APPSCRIPT_URL'); return; }
-
-  // Fetch dropdowns with a short timeout and local fallback to keep UI responsive
-  async function fetchDropdownDataWithTimeout(timeoutMs = 4500) {
-    try {
-      const p = callApi('getDropdownData','GET');
-      const dd = await Promise.race([ p, new Promise((_,rej)=> setTimeout(()=>rej(new Error('timeout')), timeoutMs)) ]);
-      return dd;
-    } catch(err) {
-      console.warn('getDropdownData failed/timeout:', err);
-      return {
-        ok:true, data: {
-          updateTime: '', years: ['2025','2024','2023'], works: ['All Works'], status: ['Planned','In Progress','Completed'],
-          engineers: ['--'], gpsByEngineer: {}, categories: ['GENERAL'], allPanchayats: [], posts: ['Engg','GRS','AE','Other']
-        }
-      };
-    }
-  }
-
   try {
-    const dd = await fetchDropdownDataWithTimeout(4500);
+    const dd = await callApi('getDropdownData','GET');
     if (dd && dd.ok && dd.data) {
       const dt = dd.data;
       if (qs('lastUpdate')) qs('lastUpdate').innerText = 'Last Update: ' + (dt.updateTime || '');
@@ -642,18 +574,24 @@ async function init(){
       populate('engineer', dt.engineers || []);
       window._gpsByEngineer = dt.gpsByEngineer || {};
 
+      // Category: prefer dt.categories; if empty -> fallback to column 20 (index 19) extracted from rows
       let catList = Array.isArray(dt.categories) ? uniqClean(dt.categories) : [];
       if (!catList || catList.length === 0) {
         try {
+          // get rows (unfiltered) and extract column index 19 (20th col)
           const rowsRes = await callApi('getFilteredData','POST',{ filter: {}, userid: '' });
           let rows = [];
           if (rowsRes && Array.isArray(rowsRes)) rows = rowsRes;
           else if (rowsRes && rowsRes.ok && Array.isArray(rowsRes.rows)) rows = rowsRes.rows;
           else if (rowsRes && Array.isArray(rowsRes.rows)) rows = rowsRes.rows;
           else if (rowsRes && rowsRes.rows && Array.isArray(rowsRes.rows)) rows = rowsRes.rows;
-          const rawCats = (rows||[]).map(r => { if (!Array.isArray(r)) return ''; return (r[19] === undefined || r[19] === null) ? '' : (''+r[19]).trim(); });
+          const rawCats = (rows||[]).map(r => {
+            if (!Array.isArray(r)) return '';
+            // index 19 -> column 20
+            return (r[19] === undefined || r[19] === null) ? '' : (''+r[19]).trim();
+          });
           catList = uniqClean(rawCats);
-        } catch(e){ dbg('debugDash',{categoryFallbackError:String(e)}); }
+        } catch(e){ dbg('debugDash',{categoryFallbackError: String(e)}); }
       }
       populate('category', catList || []);
 
@@ -682,16 +620,19 @@ async function init(){
           cPost.innerHTML = '';
           posts.forEach(p=>{
             if (p === null || p === undefined) return;
-            const s = (''+p).trim(); if (!s) return;
+            const s = (''+p).trim();
+            if (!s) return;
             const o = document.createElement('option'); o.value = s; o.textContent = s; cPost.appendChild(o);
           });
         }
       } catch(e){
-        dbg('debugDash',{postPopulateError:String(e)});
+        dbg('debugDash',{postPopulateError: String(e)});
         const cPost = qs('c_post');
         if (cPost && cPost.options.length === 1 && (cPost.options[0].text||'').toLowerCase().indexOf('loading') !== -1) {
           cPost.innerHTML = '';
-          ['Engg','GRS','Schive','AE','Other'].forEach(p=>{ const o = document.createElement('option'); o.value = p; o.textContent = p; cPost.appendChild(o); });
+          ['Engg','GRS','Schive','AE','Other'].forEach(p=>{
+            const o = document.createElement('option'); o.value = p; o.textContent = p; cPost.appendChild(o);
+          });
         }
       }
 
@@ -704,7 +645,7 @@ async function init(){
   // wire UI buttons (apply/reset/create/save)
   wireControls();
 
-  // auto-fetch table if login present
+  // attempt to auto-fetch if user already present input
   const userid = qs('loginInput')?qs('loginInput').value.trim():'';
   if (userid) {
     try { await fetchTable({}, userid); } catch(e){ dbg('debugDash',{error:String(e)}); }
@@ -712,4 +653,4 @@ async function init(){
 }
 
 /* start */
-(async function(){ try { await init(); } catch(e){ console.error('init failed', e); dbg('debugDash','init failed: '+String(e)); } })();
+(async function(){ await init(); })();
