@@ -1,11 +1,12 @@
-// app.js — Complete, fixed version (category filter client-side fallback + normalized category options)
+// app.js — updated
+// Changes: wrapped init in DOMContentLoaded, added global error handler, improved save handler (robust/debuggable), safer init fallbacks, and more defensive DOM selectors.
 
 // ====== Configuration: set your Apps Script URL here ======
 window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbz34Ak_pwJHdnVAvYsP9CiCQkd7EO50hDMySIy8a2O4OMt5ZAx7EtkKv4Anb-eYDQn90Q/exec";
 // ============================================================
 
 /* helpers */
-function qs(id){ return document.getElementById(id); }
+function qs(id){ try{ return document.getElementById(id); }catch(e){ return document.querySelector(id); } }
 function dbg(id,obj){ try{ const el = qs(id); if (el) el.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj,null,2); else console.log(id,obj); } catch(e){ console.log(e); } }
 function escapeHtml(s){ return (''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function decodeHtml(s){ if (s === null || s === undefined) return s; return s.replace(/&quot;/g,'"').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#39;/g,"'"); }
@@ -127,7 +128,6 @@ function populate(id, arr){
   try { if (cur) sel.value = cur; } catch(e){}
 }
 
-/* populateCategory: option.value = normalized, option.text = label */
 function populateCategory(id, arr){
   const sel = qs(id);
   if(!sel) return;
@@ -138,8 +138,8 @@ function populateCategory(id, arr){
     const label = (''+v).trim();
     if (label === '') return;
     const o = document.createElement('option');
-    o.value = normalizeCategory(label); // normalized for comparisons
-    o.textContent = label; // human label
+    o.value = normalizeCategory(label);
+    o.textContent = label;
     sel.appendChild(o);
   });
   try { if (cur) sel.value = cur; } catch(e){}
@@ -164,30 +164,17 @@ function clientSideFilterRows(rows, filt){
       const rowCat = normalizeCategory(rr[19]||'');
       if (rowCat !== wantCat) return false;
     }
-    if (engineerFilter){
-      if ((rr[1]||'').toLowerCase().indexOf(engineerFilter) === -1) return false;
-    }
-    if (gpFilter){
-      if ((rr[2]||'').toLowerCase().indexOf(gpFilter) === -1) return false;
-    }
-    if (workFilter){
-      if (((rr[3]||'') + ' ' + (rr[4]||'')).toLowerCase().indexOf(workFilter) === -1) return false;
-    }
-    if (statusFilter){
-      if ((rr[6]||'').toLowerCase().indexOf(statusFilter) === -1) return false;
-    }
-    if (yearFilter){
-      if ((rr[5]||'').toLowerCase().indexOf(yearFilter) === -1) return false;
-    }
-    if (searchFilter){
-      if (rr.join(' ').toLowerCase().indexOf(searchFilter)===-1) return false;
-    }
+    if (engineerFilter){ if ((rr[1]||'').toLowerCase().indexOf(engineerFilter) === -1) return false; }
+    if (gpFilter){ if ((rr[2]||'').toLowerCase().indexOf(gpFilter) === -1) return false; }
+    if (workFilter){ if (((rr[3]||'') + ' ' + (rr[4]||'')).toLowerCase().indexOf(workFilter) === -1) return false; }
+    if (statusFilter){ if ((rr[6]||'').toLowerCase().indexOf(statusFilter) === -1) return false; }
+    if (yearFilter){ if ((rr[5]||'').toLowerCase().indexOf(yearFilter) === -1) return false; }
+    if (searchFilter){ if (rr.join(' ').toLowerCase().indexOf(searchFilter)===-1) return false; }
     return true;
   });
 }
 
 /* ---------- RENDER TABLE (same as your original) ---------- */
-
 function renderTable(rows){
   const out = qs('output'); if (!out) return;
   out.innerHTML = '';
@@ -613,90 +600,111 @@ function wireControls(){
     });
   }
 
-  // ===== replace existing Save button handler with this block =====
-const saveBtn = qs('btnSave');
-if (saveBtn) {
-  saveBtn.addEventListener('click', async () => {
-    // read inputs reliably
-    const nameEl = qs('c_name');
-    const postEl = qs('c_post');
-    const dcodeEl = qs('c_dcode');
-    const pansEl = qs('c_panchayats');
-    const statusEl = qs('statusCreate');
+  // ===== enhanced Save button handler (robust + debuggable) =====
+  (function installSaveHandler(){
+    const saveBtn = qs('btnSave') || document.querySelector('[data-action="saveUser"]') || document.querySelector('button.save, button[data-action="save"]');
+    if (!saveBtn) { console.warn('Save button not found (looked for #btnSave, [data-action="saveUser"], button.save)'); return; }
 
-    const name = nameEl ? ('' + nameEl.value).trim() : '';
-    const post = postEl ? ('' + postEl.value).trim() : '';
-    const dcode = dcodeEl ? ('' + dcodeEl.value).trim() : '77';
-    let panchayats = [];
+    saveBtn.addEventListener('click', async () => {
+      const nameEl = qs('c_name') || document.querySelector('[name="c_name"]');
+      const postEl = qs('c_post') || document.querySelector('[name="c_post"]');
+      const dcodeEl = qs('c_dcode') || document.querySelector('[name="c_dcode"]');
+      const pansEl = qs('c_panchayats') || document.querySelector('[name="c_panchayats"]') || qs('c_pans');
+      const statusEl = qs('statusCreate') || document.querySelector('#statusCreate') || qs('debugCreateStatus');
 
-    if (pansEl) {
-      // if it's a multi-select, collect selectedOptions; if single select / textarea, handle gracefully
-      if (pansEl.selectedOptions && pansEl.selectedOptions.length > 0) {
-        Array.from(pansEl.selectedOptions).forEach(o => { if (o && o.value) panchayats.push(('' + o.value).trim()); });
-      } else if (pansEl.value) {
-        // fallback: comma separated string or single value
-        const raw = ('' + pansEl.value).trim();
-        panchayats = raw.split(/\s*,\s*/).map(x => x.trim()).filter(Boolean);
+      const name = nameEl ? ('' + nameEl.value).trim() : '';
+      const post = postEl ? ('' + postEl.value).trim() : '';
+      const dcode = dcodeEl ? ('' + dcodeEl.value).trim() : '77';
+
+      // collect panchayats robustly
+      let panchayats = [];
+      if (pansEl) {
+        if (pansEl.tagName === 'SELECT' && pansEl.multiple) {
+          Array.from(pansEl.selectedOptions).forEach(o => { if (o && o.value) panchayats.push(('' + o.value).trim()); });
+        } else if (pansEl.value && pansEl.tagName !== 'SELECT') {
+          const raw = ('' + pansEl.value).trim();
+          panchayats = raw.split(/\s*,\s*/).map(x=>x.trim()).filter(Boolean);
+        } else if (pansEl.options && pansEl.options.length && pansEl.selectedIndex >= 0) {
+          const opt = pansEl.options[pansEl.selectedIndex];
+          if(opt && opt.value) panchayats.push((''+opt.value).trim());
+        }
       }
-    }
 
-    // show immediate validation errors in UI
-    if (!statusEl) {
-      console.warn('statusCreate element not found (id="statusCreate") — create one to show status to user.');
-    } else {
-      statusEl.innerText = '';
-    }
+      if (statusEl) statusEl.innerText = '';
 
-    if (!name || !post || !panchayats.length) {
-      const msg = 'Please fill Name, Post and select at least one Panchayat.';
-      if (statusEl) statusEl.innerText = msg;
-      alert(msg);
-      // write debug
-      dbg('debugCreate', { error: 'validation_failed', name: name, post: post, panchayats: panchayats });
-      return;
-    }
-
-    // Build payload (ensure panchayats is an array)
-    const payload = { name: name, post: post, dcode: dcode, panchayats: panchayats };
-    // show payload in debug
-    dbg('debugCreate', { sending: payload });
-    if (statusEl) statusEl.innerText = 'Saving...';
-
-    try {
-      // send to backend
-      const res = await callApi('appendOrUpdateUser','POST',{ payload: payload });
-
-      // helpful debug
-      dbg('debugCreate', { result: res });
-
-      // handle different shaped responses
-      if (res && res.ok && res.result) {
-        const msg = 'Saved: ' + JSON.stringify(res.result);
+      if (!name || !post || panchayats.length === 0) {
+        const msg = 'Please fill Name, Post and select at least one Panchayat.';
         if (statusEl) statusEl.innerText = msg;
-        // refresh dropdowns if init exists
-        try { await init(); } catch(e){ console.warn('init refresh failed', e); }
-      } else if (res && res.result) {
-        const msg = 'Saved: ' + JSON.stringify(res.result);
-        if (statusEl) statusEl.innerText = msg;
-        try { await init(); } catch(e){ console.warn('init refresh failed', e); }
-      } else if (res && res.ok === false && res.error) {
-        // backend explicitly rejects — show message
-        const msg = 'Save response: ' + JSON.stringify(res);
-        if (statusEl) statusEl.innerText = msg;
-        alert('Save failed: ' + (res.error || JSON.stringify(res)));
-      } else {
-        // unknown shape
-        const msg = 'Save response: ' + JSON.stringify(res);
-        if (statusEl) statusEl.innerText = msg;
-        alert('Save response: ' + msg);
+        alert(msg);
+        dbg('debugCreate', { error: 'validation_failed', name: name, post: post, panchayats: panchayats });
+        return;
       }
-    } catch(err) {
-      const msg = 'Save error: ' + String(err);
-      if (statusEl) statusEl.innerText = msg;
-      dbg('debugCreate', { error: String(err) });
-      alert(msg);
-    }
-  });
+
+      const payload = { name: name, post: post, dcode: dcode, panchayats: panchayats };
+      dbg('debugCreate', { sending: payload });
+      if (statusEl) statusEl.innerText = 'Saving...';
+
+      // Try high-level callApi first
+      try {
+        const res = await callApi('appendOrUpdateUser','POST',{ payload: payload });
+        dbg('debugCreate', { callApiResult: res });
+
+        if (res && (res.ok || res.result || res.user)) {
+          const msg = 'Saved: ' + (res.result ? JSON.stringify(res.result) : (res.user ? JSON.stringify(res.user) : JSON.stringify(res)));
+          if (statusEl) statusEl.innerText = msg;
+          try { await init(); } catch(e){ console.warn('init refresh failed', e); }
+          return;
+        }
+
+        const msg = 'Unexpected save response (will try direct fetch). See console.';
+        if (statusEl) statusEl.innerText = msg;
+        console.warn('appendOrUpdateUser unexpected shape', res);
+
+      } catch(callErr) {
+        console.warn('callApi appendOrUpdateUser failed:', callErr);
+        dbg('debugCreate', { error: 'callApi_failed', message: String(callErr) });
+        if (statusEl) statusEl.innerText = 'Save via callApi failed — trying direct fetch (see console).';
+      }
+
+      // DIRECT FETCH fallback (shows raw text for debugging CORS/back-end shape)
+      try {
+        const params = new URLSearchParams();
+        params.set('action', 'appendOrUpdateUser');
+        params.set('payload', JSON.stringify(payload));
+        console.log('Direct fetch to APPSCRIPT_URL with body:', params.toString());
+
+        const resp = await fetch(window.APPSCRIPT_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+          body: params.toString(),
+          mode: 'cors'
+        });
+
+        const rawText = await resp.text();
+        let parsed = null;
+        try { parsed = JSON.parse(rawText); } catch(e) { /* not json */ }
+
+        dbg('debugCreate', { directFetchStatus: resp.status, statusText: resp.statusText, rawText: rawText, parsed: parsed });
+
+        if (resp.ok && parsed && (parsed.ok || parsed.result || parsed.user)) {
+          const msg = 'Saved (directFetch): ' + (parsed.result ? JSON.stringify(parsed.result) : JSON.stringify(parsed));
+          if (statusEl) statusEl.innerText = msg;
+          try { await init(); } catch(e){ console.warn('init refresh failed', e); }
+          return;
+        } else {
+          const msg = 'Save failed: HTTP ' + resp.status + ' — see debugCreate for raw response';
+          if (statusEl) statusEl.innerText = msg;
+          alert(msg + '\n\nOpen console/network tab for raw response.');
+        }
+
+      } catch(fetchErr) {
+        console.error('Direct fetch error:', fetchErr);
+        dbg('debugCreate', { error: 'direct_fetch_failed', message: String(fetchErr) });
+        if (statusEl) statusEl.innerText = 'Direct fetch error: ' + String(fetchErr);
+        alert('Network or CORS error when saving. Check console and Network tab for details.');
+      }
+    });
+  })();
 }
 
 /* initDropdowns + main init */
@@ -713,7 +721,6 @@ async function init(){
       populateSimple('engineer', dt.engineers || []);
       window._gpsByEngineer = dt.gpsByEngineer || {};
 
-      // Category: prefer dt.categories; if empty -> fallback to column 20 (index 19) extracted from rows
       let catList = Array.isArray(dt.categories) ? uniqClean(dt.categories) : [];
       if (!catList || catList.length === 0) {
         try {
@@ -732,7 +739,6 @@ async function init(){
       }
       populateCategory('category', catList || []);
 
-      // populate create-panel panchayats (multi-select)
       const cPans = qs('c_panchayats');
       if (cPans) {
         cPans.innerHTML = '';
@@ -743,7 +749,6 @@ async function init(){
         });
       }
 
-      // populate posts for create panel
       try {
         let postsRes = await callApi('getPostOptionsFromUserIdSheet','GET');
         let posts = [];
@@ -789,5 +794,17 @@ async function init(){
   }
 }
 
-/* start */
-(async function(){ await init(); })();
+/* start (wait for DOM ready) */
+(function(){
+  // global error handler to surface errors to debug panel
+  window.addEventListener('error', function(ev){
+    try { dbg('debugDash', { globalError: ev.message || ev.error || String(ev) }); } catch(e) { console.error(ev); }
+  });
+  window.addEventListener('unhandledrejection', function(ev){ try { dbg('debugDash', { unhandledRejection: String(ev.reason) }); } catch(e) { console.error(ev); } });
+
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    try { init(); } catch(e){ console.error('init failed', e); dbg('debugDash', 'init failed: '+String(e)); }
+  } else {
+    document.addEventListener('DOMContentLoaded', function(){ try { init(); } catch(e){ console.error('init failed', e); dbg('debugDash', 'init failed: '+String(e)); } });
+  }
+})();
