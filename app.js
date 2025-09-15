@@ -613,44 +613,90 @@ function wireControls(){
     });
   }
 
-  // Save button on Create panel
-  const saveBtn = qs('btnSave');
-  if (saveBtn) {
-    saveBtn.addEventListener('click', async ()=>{
-      const name = (qs('c_name')?qs('c_name').value.trim():'');
-      const post = (qs('c_post')?qs('c_post').value.trim():'');
-      const dcode = (qs('c_dcode')?qs('c_dcode').value.trim():'77');
-      let panchayats = [];
-      const sel = qs('c_panchayats');
-      if (sel) {
-        Array.from(sel.selectedOptions||[]).forEach(o=>{ if (o && o.value) panchayats.push(o.value); });
+  // ===== replace existing Save button handler with this block =====
+const saveBtn = qs('btnSave');
+if (saveBtn) {
+  saveBtn.addEventListener('click', async () => {
+    // read inputs reliably
+    const nameEl = qs('c_name');
+    const postEl = qs('c_post');
+    const dcodeEl = qs('c_dcode');
+    const pansEl = qs('c_panchayats');
+    const statusEl = qs('statusCreate');
+
+    const name = nameEl ? ('' + nameEl.value).trim() : '';
+    const post = postEl ? ('' + postEl.value).trim() : '';
+    const dcode = dcodeEl ? ('' + dcodeEl.value).trim() : '77';
+    let panchayats = [];
+
+    if (pansEl) {
+      // if it's a multi-select, collect selectedOptions; if single select / textarea, handle gracefully
+      if (pansEl.selectedOptions && pansEl.selectedOptions.length > 0) {
+        Array.from(pansEl.selectedOptions).forEach(o => { if (o && o.value) panchayats.push(('' + o.value).trim()); });
+      } else if (pansEl.value) {
+        // fallback: comma separated string or single value
+        const raw = ('' + pansEl.value).trim();
+        panchayats = raw.split(/\s*,\s*/).map(x => x.trim()).filter(Boolean);
       }
-      dbg('debugCreate',{sending:{name:name,post:post,dcode:dcode,panchayats:panchayats}});
-      if (!name || !post || !panchayats.length) {
-        qs('statusCreate').innerText = 'Please fill Name, Post and select at least one Panchayat.';
-        return;
+    }
+
+    // show immediate validation errors in UI
+    if (!statusEl) {
+      console.warn('statusCreate element not found (id="statusCreate") — create one to show status to user.');
+    } else {
+      statusEl.innerText = '';
+    }
+
+    if (!name || !post || !panchayats.length) {
+      const msg = 'Please fill Name, Post and select at least one Panchayat.';
+      if (statusEl) statusEl.innerText = msg;
+      alert(msg);
+      // write debug
+      dbg('debugCreate', { error: 'validation_failed', name: name, post: post, panchayats: panchayats });
+      return;
+    }
+
+    // Build payload (ensure panchayats is an array)
+    const payload = { name: name, post: post, dcode: dcode, panchayats: panchayats };
+    // show payload in debug
+    dbg('debugCreate', { sending: payload });
+    if (statusEl) statusEl.innerText = 'Saving...';
+
+    try {
+      // send to backend
+      const res = await callApi('appendOrUpdateUser','POST',{ payload: payload });
+
+      // helpful debug
+      dbg('debugCreate', { result: res });
+
+      // handle different shaped responses
+      if (res && res.ok && res.result) {
+        const msg = 'Saved: ' + JSON.stringify(res.result);
+        if (statusEl) statusEl.innerText = msg;
+        // refresh dropdowns if init exists
+        try { await init(); } catch(e){ console.warn('init refresh failed', e); }
+      } else if (res && res.result) {
+        const msg = 'Saved: ' + JSON.stringify(res.result);
+        if (statusEl) statusEl.innerText = msg;
+        try { await init(); } catch(e){ console.warn('init refresh failed', e); }
+      } else if (res && res.ok === false && res.error) {
+        // backend explicitly rejects — show message
+        const msg = 'Save response: ' + JSON.stringify(res);
+        if (statusEl) statusEl.innerText = msg;
+        alert('Save failed: ' + (res.error || JSON.stringify(res)));
+      } else {
+        // unknown shape
+        const msg = 'Save response: ' + JSON.stringify(res);
+        if (statusEl) statusEl.innerText = msg;
+        alert('Save response: ' + msg);
       }
-      qs('statusCreate').innerText = 'Saving...';
-      try {
-        const payload = { name: name, post: post, dcode: dcode, panchayats: panchayats };
-        const res = await callApi('appendOrUpdateUser','POST',{ payload: payload });
-        dbg('debugCreate',{result:res});
-        if (res && res.ok && res.result) {
-          qs('statusCreate').innerText = 'Saved: ' + JSON.stringify(res.result);
-          // refresh dropdowns in case new user added
-          await init(); 
-        } else if (res && res.result) {
-          qs('statusCreate').innerText = 'Saved: ' + JSON.stringify(res.result);
-          await init();
-        } else {
-          qs('statusCreate').innerText = 'Save response: ' + JSON.stringify(res);
-        }
-      } catch(err){
-        qs('statusCreate').innerText = 'Save error: ' + String(err);
-        dbg('debugCreate',{error:String(err)});
-      }
-    });
-  }
+    } catch(err) {
+      const msg = 'Save error: ' + String(err);
+      if (statusEl) statusEl.innerText = msg;
+      dbg('debugCreate', { error: String(err) });
+      alert(msg);
+    }
+  });
 }
 
 /* initDropdowns + main init */
