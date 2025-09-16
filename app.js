@@ -379,6 +379,9 @@ async function fetchTable(filter, userid){
     if (!userid) { alert('Please login first'); return; }
     const filt = sanitizeFilter(filter || {});
     dbg('debugDash',{ sendingFilter: filt, userid: userid });
+
+    // Call backend (existing function). Backend may not filter category server-side,
+    // so we apply a client-side category filter as a safe fallback.
     const res = await callApi('getFilteredData','POST',{ filter: filt, userid: userid });
     dbg('debugDash',{filteredRes:res});
     let rows = [];
@@ -393,6 +396,27 @@ async function fetchTable(filter, userid){
         if (Array.isArray(maybe)) rows = maybe;
       } catch(e){}
     }
+
+    // CLIENT-SIDE CATEGORY FILTER (fallback)
+    // Your sheet stores category possibly in column T(19)/U(20)/V(21) indexes 19,20,21.
+    // Normalize and match case-insensitively; allow partial match as well.
+    try {
+      const cat = (filt.category || '').toString().trim().toLowerCase();
+      if (cat) {
+        rows = (rows || []).filter(r => {
+          // r may be an array-like row
+          const c19 = ('' + (Array.isArray(r) ? r[19] : (r[19] || ''))).toLowerCase();
+          const c20 = ('' + (Array.isArray(r) ? r[20] : (r[20] || ''))).toLowerCase();
+          const c21 = ('' + (Array.isArray(r) ? r[21] : (r[21] || ''))).toLowerCase();
+          if (!c19 && !c20 && !c21) return false;
+          // exact or contains match
+          return c19 === cat || c20 === cat || c21 === cat || c19.indexOf(cat) !== -1 || c20.indexOf(cat) !== -1 || c21.indexOf(cat) !== -1;
+        });
+      }
+    } catch(e){
+      console.warn('category client-filter failed', e);
+    }
+
     renderTable(rows);
   } catch(err){ dbg('debugDash',{fetchTableError:String(err)}); }
 }
