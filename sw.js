@@ -4,4 +4,4 @@ self.addEventListener('install', ev => {
 });
 self.addEventListener('fetch', ev => {
   ev.respondWith(caches.match(ev.request).then(r=> r || fetch(ev.request)));
-});
+});// hhh
