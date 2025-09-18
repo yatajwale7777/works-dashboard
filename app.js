@@ -1,4 +1,4 @@
-// app.js — updated for your backend.gs (send top-level fields for appendOrUpdateUser)
+// app.js — updated for youraa backend.gs (send top-level fields for appendOrUpdateUser)
 // Put this file in the same folder as index.html (replace current app.js)
 
 window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbz34Ak_pwJHdnVAvYsP9CiCQkd7EO50hDMySIy8a2O4OMt5ZAx7EtkKv4Anb-eYDQn90Q/exec";
