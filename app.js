@@ -1,10 +1,9 @@
-// app.js — updated for your backend.gs (send top-level fields for appendOrUpdateUser)
-// Put this file in the same folder as index.html (replace current app.js)
-
+// app.js — Works Dashboard frontend (final)
+// Replace APPSCRIPT URL if needed
 window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbz34Ak_pwJHdnVAvYsP9CiCQkd7EO50hDMySIy8a2O4OMt5ZAx7EtkKv4Anb-eYDQn90Q/exec";
 
-/* Helpers */
-function qs(id){ try { return document.getElementById(id); } catch(e) { return null; } }
+/* tiny helpers */
+function qs(id){ try { return document.getElementById(id); } catch(e){ return null; } }
 function dbg(id,obj){ try { const el = qs(id); if (el) el.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj,null,2); else console.log(id,obj); } catch(e){ console.log(e); } }
 function escapeHtml(s){ return (''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function decodeHtml(s){ if (s === null || s === undefined) return s; return s.replace(/&quot;/g,'"').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#39;/g,"'"); }
@@ -18,7 +17,7 @@ async function safeFetchJson(response){
   catch(e){ return { ok:false, error:'non-json-response', status: response.status, statusText: response.statusText, raw: txt }; }
 }
 
-/* JSONP fallback */
+/* JSONP fallback helper */
 function jsonpFetch(url, cbParam='callback', timeoutMs=8000){
   return new Promise((resolve, reject) => {
     const cbName = '__jsonp_cb_' + Math.random().toString(36).slice(2);
@@ -53,7 +52,6 @@ async function callApi(action, method='GET', payload=null){
     if (payload && typeof payload === 'object') {
       Object.keys(payload).forEach(k => {
         const v = payload[k];
-        // For arrays (panchayats), send JSON string so Apps Script can parse if needed
         if (Array.isArray(v)) params.set(k, JSON.stringify(v));
         else params.set(k, typeof v === 'object' ? JSON.stringify(v) : String(v));
       });
@@ -67,7 +65,6 @@ async function callApi(action, method='GET', payload=null){
       });
       return await safeFetchJson(resp);
     } catch(err){
-      // fallback to JSONP GET-style (only works if server supports callback)
       try {
         const u = new URL(window.APPSCRIPT_URL);
         u.searchParams.set('action', action);
@@ -125,7 +122,21 @@ function populate(id, arr){
   try { if (cur) sel.value = cur; } catch(e){}
 }
 
-/* renderTable + modal (kept concise, same behaviour) */
+/* parsePercentValue robustly */
+function parsePercentValue(raw) {
+  if (raw === null || raw === undefined) return NaN;
+  let s = (''+raw).toString().trim();
+  const hasPercent = s.indexOf('%') !== -1;
+  s = s.replace(/[^0-9.\-]/g, '');
+  if (s === '') return NaN;
+  let n = Number(s);
+  if (isNaN(n)) return NaN;
+  if (hasPercent) return n;
+  if (Math.abs(n) <= 1) return n * 100;
+  return n;
+}
+
+/* renderTable + modal wiring */
 function renderTable(rows){
   const out = qs('output'); if (!out) return;
   out.innerHTML = '';
@@ -254,7 +265,7 @@ function installRowClickHandlers(){
   });
 }
 
-/* Modal logic (kept same) */
+/* Modal logic */
 const modalOverlay = qs('modalOverlay'), modalTitle = qs('modalTitle'), modalMeta = qs('modalMeta'), modalBody = qs('modalBody');
 let currentModalData = null;
 
@@ -328,7 +339,7 @@ function closeModal(){ if(modalOverlay){ modalOverlay.style.display = 'none'; do
 if (qs('modalClose')) qs('modalClose').addEventListener('click', closeModal);
 if (modalOverlay) modalOverlay.addEventListener('click', function(e){ if (e.target === modalOverlay) closeModal(); });
 
-/* export modal CSV */
+/* modal CSV export */
 if (qs('modalExport')) qs('modalExport').addEventListener('click', function(){
   const map = currentModalData; if (!map) return alert('No data');
   const planned = ['Unskilled','Semi-skilled','Skilled','Material','Contingency','Total Cost'].map(k=> toNum(map[k]));
@@ -355,7 +366,7 @@ if (qs('modalExport')) qs('modalExport').addEventListener('click', function(){
   const a = document.createElement('a'); a.href = url; a.download = ((map['Name of work']||'work').toString().replace(/[^\w\-]/g,'_').slice(0,60)) + '_details.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 });
 
-/* export whole table */
+/* export whole table CSV */
 if (qs('exportBtn')) qs('exportBtn').addEventListener('click', ()=> {
   const table = qs('dataTable'); if (!table) return alert('No table to export');
   const rows = Array.from(table.querySelectorAll('thead tr, tbody tr'));
@@ -380,8 +391,7 @@ async function fetchTable(filter, userid){
     const filt = sanitizeFilter(filter || {});
     dbg('debugDash',{ sendingFilter: filt, userid: userid });
 
-    // Call backend (existing function). Backend may not filter category server-side,
-    // so we apply a client-side category filter as a safe fallback.
+    // Call backend
     const res = await callApi('getFilteredData','POST',{ filter: filt, userid: userid });
     dbg('debugDash',{filteredRes:res});
     let rows = [];
@@ -397,19 +407,15 @@ async function fetchTable(filter, userid){
       } catch(e){}
     }
 
-    // CLIENT-SIDE CATEGORY FILTER (fallback)
-    // Your sheet stores category possibly in column T(19)/U(20)/V(21) indexes 19,20,21.
-    // Normalize and match case-insensitively; allow partial match as well.
+    // CLIENT-SIDE category fallback filter
     try {
       const cat = (filt.category || '').toString().trim().toLowerCase();
       if (cat) {
         rows = (rows || []).filter(r => {
-          // r may be an array-like row
           const c19 = ('' + (Array.isArray(r) ? r[19] : (r[19] || ''))).toLowerCase();
           const c20 = ('' + (Array.isArray(r) ? r[20] : (r[20] || ''))).toLowerCase();
           const c21 = ('' + (Array.isArray(r) ? r[21] : (r[21] || ''))).toLowerCase();
           if (!c19 && !c20 && !c21) return false;
-          // exact or contains match
           return c19 === cat || c20 === cat || c21 === cat || c19.indexOf(cat) !== -1 || c20.indexOf(cat) !== -1 || c21.indexOf(cat) !== -1;
         });
       }
@@ -417,11 +423,37 @@ async function fetchTable(filter, userid){
       console.warn('category client-filter failed', e);
     }
 
+    window.allData = Array.isArray(rows) ? rows.slice() : [];
     renderTable(rows);
   } catch(err){ dbg('debugDash',{fetchTableError:String(err)}); }
 }
 
-/* Login / Logout */
+/* Percent filter */
+function applyPercentFilter(threshold, mode) {
+  if (threshold === null || threshold === undefined) threshold = 0;
+  threshold = Number(threshold);
+  if (isNaN(threshold)) { alert('Enter a valid numeric threshold'); return; }
+  const modeLower = (''+mode).toLowerCase();
+
+  if (!window.allData || !Array.isArray(window.allData)) {
+    alert('No data loaded. Please login or apply other filters first.');
+    return;
+  }
+
+  const colIndexV = 21; // column V (zero-based 21)
+  const filtered = window.allData.filter(r => {
+    const raw = (Array.isArray(r) ? r[colIndexV] : (r[colIndexV] || ''));
+    const pct = parsePercentValue(raw);
+    if (isNaN(pct)) return false;
+    if (modeLower === 'above') return pct > threshold;
+    if (modeLower === 'below') return pct < threshold;
+    return false;
+  });
+
+  renderTable(filtered);
+}
+
+/* Login / Logout wiring */
 if (qs('loginBtn')) qs('loginBtn').addEventListener('click', ()=>{ const v = qs('loginInput').value.trim(); if (!v) return alert('Enter UserID or Name'); doLogin(v); });
 if (qs('logoutBtn')) qs('logoutBtn').addEventListener('click', ()=>{ if(qs('loginInput')) qs('loginInput').value=''; if(qs('userInfo')) qs('userInfo').innerText=''; if(qs('filtersCard')) qs('filtersCard').style.display='none'; if(qs('output')) qs('output').innerHTML=''; if(qs('logoutBtn')) qs('logoutBtn').style.display='none'; });
 
@@ -450,7 +482,7 @@ async function doLogin(val){
   } catch(err){ dbg('debugDash',{loginError:String(err)}); alert('Login error: '+String(err)); }
 }
 
-/* wireControls + save handling (sends top-level fields) */
+/* wireControls + save handling */
 function wireControls(){
   let apply = qs('filterBtn') || qs('applyBtn') || document.querySelector('[data-action="applyFilter"]');
   if (apply) apply.addEventListener('click', ()=> {
@@ -469,12 +501,22 @@ function wireControls(){
 
   let reset = qs('resetBtn') || document.querySelector('[data-action="resetFilters"]');
   if (reset) reset.addEventListener('click', ()=>{
-    ['engineer','gp','work','status','year','category','search'].forEach(id=>{
+    ['engineer','gp','work','status','year','category','search','percentThreshold','percentMode'].forEach(id=>{
       const el = qs(id); if (!el) return;
       if (el.tagName === 'SELECT' || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') el.value = '';
     });
+    if (qs('percentThreshold')) qs('percentThreshold').value = '75';
+    if (qs('percentMode')) qs('percentMode').value = 'above';
+
     const userid = qs('loginInput')?qs('loginInput').value.trim():'';
     if (userid) fetchTable({}, userid);
+  });
+
+  const applyPctBtn = qs('applyPercentFilter');
+  if (applyPctBtn) applyPctBtn.addEventListener('click', ()=>{
+    const t = qs('percentThreshold')?qs('percentThreshold').value: '';
+    const m = qs('percentMode')?qs('percentMode').value: 'above';
+    applyPercentFilter(t, m);
   });
 
   const tabDash = qs('tabDashboard'), tabCreate = qs('tabCreate'), panelDash = qs('panelDashboard'), panelCreate = qs('panelCreate');
@@ -482,7 +524,7 @@ function wireControls(){
   if (tabCreate) tabCreate.addEventListener('click', ()=>{ if (tabCreate) tabCreate.classList.add('active'); if (tabDash) tabDash.classList.remove('active'); if (panelCreate) panelCreate.style.display='block'; if (panelDash) panelDash.style.display='none'; });
 
   let create = qs('createBtn') || document.querySelector('[data-action="openCreateUser"]');
-  if (create) create.addEventListener('click', ()=>{ const tab = qs('tabCreate'); if (tab) tab.click(); else { const panel = qs('createUserPanel') || qs('panelCreate') || document.getElementById('createUser'); if (panel) panel.style.display = 'block'; } });
+  if (create) create.addEventListener('click', ()=>{ const tab = qs('tabCreate'); if (tab) tab.click(); else { const panel = qs('panelCreate') || qs('createUserPanel') || document.getElementById('createUser'); if (panel) panel.style.display = 'block'; } });
 
   const saveBtn = qs('btnSave');
   if (saveBtn) {
@@ -510,7 +552,6 @@ function wireControls(){
       const payload = { name: name, post: post, dcode: dcode, panchayats: panchayats };
 
       try {
-        // Send top-level fields as expected by backend.gs
         const res = await callApi('appendOrUpdateUser','POST', payload);
         dbg('debugCreate',{result:res});
         if (res && (res.ok || res.result || res.action)) {
@@ -526,14 +567,13 @@ function wireControls(){
         console.warn('callApi failed, falling back to direct fetch', err);
       }
 
-      // DIRECT FETCH fallback — send explicit form fields
+      // DIRECT FETCH fallback
       try {
         const params = new URLSearchParams();
         params.set('action', 'appendOrUpdateUser');
         params.set('name', payload.name);
         params.set('post', payload.post);
         params.set('dcode', payload.dcode);
-        // send panchayats as JSON string so Apps Script can parse
         params.set('panchayats', JSON.stringify(payload.panchayats));
 
         const resp = await fetch(window.APPSCRIPT_URL, {
@@ -587,6 +627,7 @@ async function init(){
           let rows = [];
           if (rowsRes && Array.isArray(rowsRes)) rows = rowsRes;
           else if (rowsRes && rowsRes.ok && Array.isArray(rowsRes.rows)) rows = rowsRes.rows;
+          else if (rowsRes && rowsRes.data && Array.isArray(rowsRes.data.rows)) rows = rowsRes.data.rows;
           const rawCats = (rows||[]).map(r => { if (!Array.isArray(r)) return ''; return (r[19] === undefined || r[19] === null) ? '' : (''+r[19]).trim(); });
           catList = uniqClean(rawCats);
         } catch(e){ dbg('debugDash',{categoryFallbackError: String(e)}); }

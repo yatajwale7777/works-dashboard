@@ -5,12 +5,66 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Works Dashboard</title>
 
-  <link rel="stylesheet" href="styles.css">
-  <!-- (Optional) override below with your Apps Script URL in app.js -->
+  <style>
+    :root{
+      --bg:#f6f8fb;
+      --card:#ffffff;
+      --muted:#6b7280;
+      --accent:#0b78e3;
+      --accent-2:#0b6bd6;
+      --glass: rgba(255,255,255,0.6);
+      --radius:12px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    }
+
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;background:linear-gradient(180deg,#eef4ff 0%,var(--bg) 60%);color:#0f172a}
+
+    .container{max-width:1100px;margin:28px auto;padding:18px}
+    .card{background:var(--card);border-radius:var(--radius);box-shadow:0 6px 20px rgba(11,23,47,0.08);padding:16px}
+
+    .tabs{display:flex;gap:8px;margin-bottom:8px}
+    .tab-btn{background:transparent;border:0;padding:8px 12px;border-radius:10px;font-weight:bold;cursor:pointer}
+    .tab-btn.active{background:linear-gradient(90deg,var(--accent),var(--accent-2));color:#fff}
+
+    .meta{color:var(--muted);font-size:13px}
+    .muted{color:var(--muted);font-size:13px}
+
+    .small{padding:8px;border-radius:8px;border:1px solid #e6edf6;background:#fbfdff}
+    input.small, select.small{width:100%;font-size:14px}
+
+    .row{display:flex;gap:12px;flex-wrap:wrap}
+    label{display:block;color:var(--muted);font-size:13px;margin-bottom:6px}
+
+    .table-wrap{margin-top:14px}
+    #output{min-height:120px}
+
+    #filtersCard{border-left:4px solid var(--accent);padding:12px}
+
+    .modal-overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;padding:24px;background:rgba(2,6,23,0.45)}
+    .modal-card{background:var(--card);border-radius:12px;max-width:920px;width:100%;padding:16px;box-shadow:0 18px 40px rgba(2,6,23,0.3)}
+    .modal-header{display:flex;align-items:center;justify-content:space-between}
+    .close-x{background:transparent;border:0;padding:6px 10px;border-radius:8px;cursor:pointer}
+
+    @media (max-width:880px){
+      .container{padding:12px}
+      .row{gap:8px}
+      .tabs{flex-wrap:wrap}
+    }
+
+    button.tab-btn{border:1px solid rgba(11,23,47,0.06);background:#fff}
+    button.tab-btn:hover{transform:translateY(-2px)}
+
+    table{width:100%;border-collapse:collapse;font-size:14px}
+    th,td{padding:10px;border-bottom:1px solid #eef2f7;text-align:left}
+    th{background:#fbfdff;position:sticky;top:0;z-index:2}
+  </style>
 </head>
+
 <body>
   <div class="container">
     <div class="card">
+
       <div class="tabs">
         <button id="tabDashboard" class="tab-btn active">📊 Dashboard</button>
         <button id="tabCreate" class="tab-btn">➕ Create / Update User</button>
@@ -32,102 +86,93 @@
         </div>
 
         <div id="filtersCard" class="card" style="margin-top:12px;display:none">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
-            <h3 style="margin:0">Filters (You will see only your Panchayats)</h3>
-            <div style="display:flex;gap:8px">
+
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap">
+            <h3 style="margin:0;">Filters</h3>
+
+            <div style="display:flex;gap:8px;">
               <button id="exportBtn" class="tab-btn">Export CSV</button>
-              <button id="resetBtn" class="tab-btn">Reset Filters</button>
+              <button id="resetBtn" class="tab-btn">Reset</button>
             </div>
           </div>
 
           <div class="row" style="margin-top:8px">
-            <div style="flex:1;min-width:140px">
-              <label>Engineer</label>
-              <select id="engineer" class="small"></select>
+            <div style="flex:1;min-width:140px"><label>Engineer</label><select id="engineer" class="small"></select></div>
+            <div style="flex:1;min-width:140px"><label>Panchayat</label><select id="gp" class="small"></select></div>
+            <div style="flex:1;min-width:110px"><label>Year</label><select id="year" class="small"></select></div>
+            <div style="flex:1;min-width:140px"><label>Work Type</label><select id="work" class="small"></select></div>
+            <div style="flex:1;min-width:110px"><label>Status</label><select id="status" class="small"></select></div>
+            <div style="flex:1;min-width:140px"><label>Category</label><select id="category" class="small"></select></div>
+            <div style="flex:1;min-width:180px"><label>Search</label><input id="search" class="small" placeholder="keyword"></div>
+          </div>
+
+          <div class="row" style="margin-top:10px;align-items:center;">
+            <div style="flex:0 0 200px;">
+              <label>% Expenditure</label>
+              <input id="percentThreshold" type="number" class="small" value="75">
             </div>
-            <div style="flex:1;min-width:140px">
-              <label>Panchayat</label>
-              <select id="gp" class="small"></select>
+            <div style="flex:0 0 140px;">
+              <label>Mode</label>
+              <select id="percentMode" class="small">
+                <option value="above">Above</option>
+                <option value="below">Below</option>
+              </select>
             </div>
-            <div style="flex:1;min-width:110px">
-              <label>Year</label>
-              <select id="year" class="small"></select>
-            </div>
-            <div style="flex:1;min-width:140px">
-              <label>Work Type</label>
-              <select id="work" class="small"></select>
-            </div>
-            <div style="flex:1;min-width:110px">
-              <label>Status</label>
-              <select id="status" class="small"></select>
-            </div>
-            <div style="flex:1;min-width:140px">
-              <label>Category</label>
-              <select id="category" class="small"></select>
-            </div>
-            <div style="flex:1;min-width:180px">
-              <label>Search</label>
-              <input id="search" class="small" placeholder="keyword">
+            <div style="flex:0 0 140px;margin-top:22px;">
+              <button id="applyPercentFilter" class="tab-btn">Apply % Filter</button>
             </div>
           </div>
-          <div style="margin-top:8px;text-align:right">
+
+          <div style="margin-top:10px;text-align:right">
             <button id="filterBtn" class="tab-btn">Apply Filter</button>
           </div>
         </div>
 
-        <div class="table-wrap" style="margin-top:12px">
-          <div id="output"></div>
-        </div>
+        <div class="table-wrap"><div id="output"></div></div>
 
-        <details style="margin-top:10px"><summary>Debug / backend</summary><pre id="debugDash">no calls yet</pre></details>
+        <details style="margin-top:12px"><summary>Debug</summary><pre id="debugDash">no calls yet</pre></details>
       </div>
 
-      <!-- CREATE / update user -->
+      <!-- CREATE / UPDATE -->
       <div id="panelCreate" style="display:none">
         <div class="card">
-          <h2 style="margin:0 0 6px 0">Create / Update User</h2>
-          <div class="muted">Only essential fields shown.</div>
+          <h2>Create / Update User</h2>
 
-          <div style="margin-top:8px">
-            <label for="c_name">Name</label>
-            <input id="c_name" type="text" placeholder="e.g. irfan Qureshi" class="small">
+          <label>Name</label>
+          <input id="c_name" type="text" class="small">
 
-            <label for="c_post">Post</label>
-            <select id="c_post" class="small"><option>Loading posts...</option></select>
+          <label>Post</label>
+          <select id="c_post" class="small"><option>Loading...</option></select>
 
-            <!-- removed Engg input as requested -->
+          <label>Panchayats</label>
+          <select id="c_panchayats" multiple style="width:100%;min-height:120px"></select>
 
-            <label for="c_panchayats">Panchayats (multiple)</label>
-            <select id="c_panchayats" multiple style="width:100%;min-height:120px"></select>
-            <div class="muted">Hold Ctrl/Cmd to select multiple</div>
+          <label>DCode</label>
+          <input id="c_dcode" class="small" value="77">
 
-            <label for="c_dcode">DCode</label>
-            <input id="c_dcode" type="text" value="77" class="small">
-
-            <div style="margin-top:12px;display:flex;gap:8px">
-              <button id="btnSave" class="tab-btn">Save</button>
-            </div>
-
-            <div id="statusCreate" style="margin-top:12px" class="muted"></div>
-
-            <details style="margin-top:12px"><summary>Debug</summary><pre id="debugCreate">no calls yet</pre></details>
+          <div style="margin-top:12px;">
+            <button id="btnSave" class="tab-btn">Save</button>
           </div>
+
+          <div id="statusCreate" class="muted" style="margin-top:12px"></div>
+
+          <details><summary>Debug</summary><pre id="debugCreate">no calls yet</pre></details>
         </div>
       </div>
 
     </div>
   </div>
 
-  <!-- modal (overlay) -->
-  <div id="modalOverlay" class="modal-overlay" role="dialog" aria-modal="true" aria-hidden="true">
+  <!-- MODAL -->
+  <div id="modalOverlay" class="modal-overlay">
     <div class="modal-card">
       <div class="modal-header">
         <div>
-          <div id="modalTitle" class="modal-title">Work Details</div>
+          <div id="modalTitle" style="font-weight:bold;font-size:18px"></div>
           <div id="modalMeta" class="meta"></div>
         </div>
         <div>
-          <button id="modalExport" class="tab-btn">Export Details (CSV)</button>
+          <button id="modalExport" class="tab-btn">Export Details</button>
           <button id="modalClose" class="close-x">Close</button>
         </div>
       </div>
@@ -137,5 +182,37 @@
   </div>
 
   <script src="app.js"></script>
+
+  <script>
+    // UI tab + modal basics
+    (function(){
+      const $ = id => document.getElementById(id);
+      const show = el => el && (el.style.display="block");
+      const hide = el => el && (el.style.display="none");
+
+      $('tabDashboard').onclick=function(){
+        this.classList.add('active');
+        $('tabCreate').classList.remove('active');
+        show($('panelDashboard')); hide($('panelCreate'));
+      };
+      $('tabCreate').onclick=function(){
+        this.classList.add('active');
+        $('tabDashboard').classList.remove('active');
+        show($('panelCreate')); hide($('panelDashboard'));
+      };
+
+      $('modalClose').onclick=function(){ hide($('modalOverlay')); };
+      $('modalOverlay').onclick=function(e){ if(e.target===this) hide(this); };
+
+      window.__worksUI = {
+        openModal:(title,body)=>{
+          $('modalTitle').textContent=title||"Details";
+          $('modalBody').innerHTML=body||"";
+          show($('modalOverlay'));
+        }
+      };
+    })();
+  </script>
+
 </body>
 </html>
