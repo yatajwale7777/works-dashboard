@@ -1,4 +1,4 @@
-// app.js — updated for youraa backend.gs (send top-level fields for appendOrUpdateUser)
+// app.js — updated for your backend.gs (send top-level fields for appendOrUpdateUser)
 // Put this file in the same folder as index.html (replace current app.js)
 
 window.APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbz34Ak_pwJHdnVAvYsP9CiCQkd7EO50hDMySIy8a2O4OMt5ZAx7EtkKv4Anb-eYDQn90Q/exec";
@@ -123,24 +123,6 @@ function populate(id, arr){
     const o = document.createElement('option'); o.value = sv; o.textContent = sv; sel.appendChild(o);
   });
   try { if (cur) sel.value = cur; } catch(e){}
-}
-
-/* Parse percent value robustly (handles '75', '75%', '0.75' -> returns 75) */
-function parsePercentValue(raw) {
-  if (raw === null || raw === undefined) return NaN;
-  let s = (''+raw).toString().trim();
-  // remove any trailing/leading non-digit characters except dot and minus
-  // but keep % for detection
-  const hasPercent = s.indexOf('%') !== -1;
-  s = s.replace(/[^0-9.\-]/g, '');
-  if (s === '') return NaN;
-  let n = Number(s);
-  if (isNaN(n)) return NaN;
-  if (hasPercent) return n;
-  // If small (<=1) treat 0.75 as 75%
-  if (Math.abs(n) <= 1) return n * 100;
-  // If likely already percent (e.g., 75), return as-is
-  return n;
 }
 
 /* renderTable + modal (kept concise, same behaviour) */
@@ -435,37 +417,8 @@ async function fetchTable(filter, userid){
       console.warn('category client-filter failed', e);
     }
 
-    // Save full result for client-side filtering (percent filter etc.)
-    window.allData = Array.isArray(rows) ? rows.slice() : [];
-
     renderTable(rows);
   } catch(err){ dbg('debugDash',{fetchTableError:String(err)}); }
-}
-
-/* Percent filter function - uses window.allData */
-function applyPercentFilter(threshold, mode) {
-  // threshold -> numeric percent (e.g., 75)
-  if (threshold === null || threshold === undefined) threshold = 0;
-  threshold = Number(threshold);
-  if (isNaN(threshold)) { alert('Enter a valid numeric threshold'); return; }
-  const modeLower = (''+mode).toLowerCase();
-
-  if (!window.allData || !Array.isArray(window.allData)) {
-    alert('No data loaded. Please login or apply other filters first.');
-    return;
-  }
-
-  const colIndexV = 21; // Column V = 22nd column, zero-based index 21
-  const filtered = window.allData.filter(r => {
-    const raw = (Array.isArray(r) ? r[colIndexV] : (r[colIndexV] || ''));
-    const pct = parsePercentValue(raw); // returns numeric percent (0..100)
-    if (isNaN(pct)) return false;
-    if (modeLower === 'above') return pct > threshold;
-    if (modeLower === 'below') return pct < threshold;
-    return false;
-  });
-
-  renderTable(filtered);
 }
 
 /* Login / Logout */
@@ -516,24 +469,12 @@ function wireControls(){
 
   let reset = qs('resetBtn') || document.querySelector('[data-action="resetFilters"]');
   if (reset) reset.addEventListener('click', ()=>{
-    ['engineer','gp','work','status','year','category','search','percentThreshold','percentMode'].forEach(id=>{
+    ['engineer','gp','work','status','year','category','search'].forEach(id=>{
       const el = qs(id); if (!el) return;
       if (el.tagName === 'SELECT' || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') el.value = '';
     });
-    // reset percent default value if present
-    if (qs('percentThreshold')) qs('percentThreshold').value = '75';
-    if (qs('percentMode')) qs('percentMode').value = 'above';
-
     const userid = qs('loginInput')?qs('loginInput').value.trim():'';
     if (userid) fetchTable({}, userid);
-  });
-
-  // Percent filter button wiring
-  const applyPctBtn = qs('applyPercentFilter');
-  if (applyPctBtn) applyPctBtn.addEventListener('click', ()=>{
-    const t = qs('percentThreshold')?qs('percentThreshold').value: '';
-    const m = qs('percentMode')?qs('percentMode').value: 'above';
-    applyPercentFilter(t, m);
   });
 
   const tabDash = qs('tabDashboard'), tabCreate = qs('tabCreate'), panelDash = qs('panelDashboard'), panelCreate = qs('panelCreate');

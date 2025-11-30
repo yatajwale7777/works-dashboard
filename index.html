@@ -70,28 +70,6 @@
               <input id="search" class="small" placeholder="keyword">
             </div>
           </div>
-
-          <!-- PERCENT FILTER: added for % Expenditure (reads from Sheet V column) -->
-          <div class="row" style="margin-top:10px;align-items:center;gap:8px">
-            <div style="flex:0 0 220px;">
-              <label>% Expenditure</label>
-              <input type="number" id="percentThreshold" placeholder="Enter %" value="75" min="0" max="200" class="small">
-            </div>
-            <div style="flex:0 0 140px;">
-              <label>Mode</label>
-              <select id="percentMode" class="small">
-                <option value="above">Above</option>
-                <option value="below">Below</option>
-              </select>
-            </div>
-            <div style="flex:0 0 120px; margin-top:20px;">
-              <button id="applyPercentFilter" class="tab-btn">Apply % Filter</button>
-            </div>
-            <div style="flex:1;min-width:160px; margin-top:20px;">
-              <div class="muted">Filter reads % values from Sheet11 column V (V4:V).</div>
-            </div>
-          </div>
-
           <div style="margin-top:8px;text-align:right">
             <button id="filterBtn" class="tab-btn">Apply Filter</button>
           </div>
@@ -140,7 +118,7 @@
     </div>
   </div>
 
-  <!-- modal (overlay) --->
+  <!-- modal (overlay) -->
   <div id="modalOverlay" class="modal-overlay" role="dialog" aria-modal="true" aria-hidden="true">
     <div class="modal-card">
       <div class="modal-header">
